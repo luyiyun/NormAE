@@ -11,7 +11,7 @@ import progressbar as pb
 import pandas as pd
 
 from datasets import MetaBatchEffect
-from networks import Coder, RankLoss
+from networks import Coder
 import transfer as T
 import metrics as mm
 
@@ -28,7 +28,7 @@ class BatchEffectTrainer:
     def __init__(
         self, models, criterions, optimizers, scheduler=NoneScheduler(None),
         epoch=100, device=torch.device('cuda:0'), l2=0.0, clip_grad=False,
-        ae_disc_train_num=(1, 2), no_best=False
+        ae_disc_train_num=(1, 2), no_best=False, autoencode_weight=0.5
     ):
         # 初始化使用的标准和保存的参数
         if not no_best:
@@ -61,6 +61,7 @@ class BatchEffectTrainer:
         self.autoencode_train_num, self.discriminate_train_num = \
             ae_disc_train_num
         self.no_best = no_best
+        self.autoencode_weight = autoencode_weight
 
     def fit(self, dataloaders):
         epoch_metric = 0.0
@@ -116,7 +117,7 @@ class BatchEffectTrainer:
                 batch_phase = 'discriminate'
                 for batch_x, batch_y in iterator:
                     batch_x = batch_x.to(self.device, torch.float)
-                    batch_y = batch_y.to(self.device, torch.float)
+                    batch_y = batch_y.to(self.device, torch.long).squeeze()
                     if phase == 'train':
                         for optimizer in self.optimizers.values():
                             optimizer.zero_grad()
@@ -173,10 +174,11 @@ class BatchEffectTrainer:
             logit = self.models['discriminator'](hidden[:, :no_batch_num])
         with torch.set_grad_enabled(True):
             reconstruction_loss = self.criterions['reconstruction'](
-                batch_x, batch_x_recon)
-            adversarial_loss = self.criterions['adversarial'](batch_y, logit)
+                batch_x_recon, batch_x)
+            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
             # 排序做的不好，说明这写维度中没有批次的信息，批次的信息都在后面的维度中
-            all_loss = reconstruction_loss - adversarial_loss
+            all_loss = self.autoencode_weight*reconstruction_loss - \
+                (1-self.autoencode_weight)*adversarial_loss
         all_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -195,7 +197,7 @@ class BatchEffectTrainer:
         with torch.set_grad_enabled(True):
             no_batch_num = self.models['discriminator'].in_f
             logit = self.models['discriminator'](hidden[:, :no_batch_num])
-            adversarial_loss = self.criterions['adversarial'](batch_y, logit)
+            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
         adversarial_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -213,7 +215,7 @@ class BatchEffectTrainer:
             hidden[:, no_batch_num:] = 0.
             batch_x_recon = self.models['decoder'](hidden)
             logit = self.models['discriminator'](hidden[:, :no_batch_num])
-            adversarial_loss = self.criterions['adversarial'](batch_y, logit)
+            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
         self.metrics['qc_discriminate_loss'].add(
             adversarial_loss, batch_x.size(0))
         self.metrics['qc_distance'].add(batch_x_recon)
@@ -253,8 +255,10 @@ def main():
     #     T.Normalization()
     # ])
     meta_data = MetaBatchEffect.from_csv(
-        config.sample_file, config.meta_file, ['injection.order', 'batch'],
-        pre_transfer=T.Normalization()
+        config.sample_file, config.meta_file, 'batch',
+        pre_transfer=T.MultiCompose(
+            T.Normalization(), lambda x, y: (x, y - 1)
+        )
     )
     subject_dat, qc_dat = meta_data.split_qc()
     dataloaders = {
@@ -273,13 +277,13 @@ def main():
     encoder = Coder(in_f, config.args.bottle_num)
     decoder = Coder(config.args.bottle_num, in_f)
     discriminator = Coder(
-        config.args.no_batch_num, 1, block_num=2,
+        config.args.no_batch_num, 4, block_num=2,
         spectral_norm=True
     )
     models = {
         'encoder': encoder, 'decoder': decoder, 'discriminator': discriminator}
 
-    adversarial_criterion = RankLoss()
+    adversarial_criterion = nn.CrossEntropyLoss()
     reconstruction_criterion = nn.MSELoss()
     criterions = {
         'adversarial': adversarial_criterion,
@@ -287,11 +291,11 @@ def main():
     }
 
     ae_lr, disc_lr = config.args.ae_disc_lr
-    reconstruction_optim = optim.Adam(
+    reconstruction_optim = optim.Adamax(
         chain(encoder.parameters(), decoder.parameters()),
         lr=ae_lr
     )
-    adversarial_optim = optim.Adam(
+    adversarial_optim = optim.Adamax(
         discriminator.parameters(), lr=disc_lr)
     optimizers = {
         'autoencode': reconstruction_optim, 'discriminate': adversarial_optim}
@@ -300,7 +304,8 @@ def main():
     trainer = BatchEffectTrainer(
         models, criterions, optimizers, epoch=config.args.epoch,
         ae_disc_train_num=config.args.ae_disc_train_num,
-        no_best=config.args.no_best
+        no_best=config.args.no_best,
+        autoencode_weight=config.args.autoencode_weight
     )
     best_models, hist = trainer.fit(dataloaders)
     print('')

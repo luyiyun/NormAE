@@ -218,7 +218,7 @@ def test():
     meta_file = "./DATA/metabolic/data_T3原始数据.csv"
     t1 = time.perf_counter()
     data = MetaBatchEffect.from_csv(
-        sample_file, meta_file, 'injection.order'
+        sample_file, meta_file, 'batch'
     )
     t2 = time.perf_counter()
     print(t2 - t1)

@@ -100,7 +100,7 @@ class RankLoss(nn.Module):
         elif reduction == 'sum':
             self.agg_func = torch.sum
 
-    def forward(self, rank_batch, pred_rank):
+    def forward(self, pred_rank, rank_batch):
         # rank loss
         low, high = self._comparable_pairs(rank_batch)
         low_pred, high_pred = pred_rank[low], pred_rank[high]

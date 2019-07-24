@@ -61,6 +61,10 @@ class Config:
             '--no_best', action='store_true',
             help="使用此参数则表示不根据metric进行选择得到最好的模型"
         )
+        self.parser.add_argument(
+            '--autoencode_weight', type=float, default=0.9,
+            help="重建误差权重，对抗权重是1-它，默认是0.9"
+        )
         if pred:
             self.parser.add_argument(
                 '-d', '--dir', help="想要预测的模型，指的是训练完保存的文件夹")

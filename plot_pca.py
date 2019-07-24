@@ -30,11 +30,11 @@ def main():
     ):
         ax = axes[i]
         ax.scatter(
-            dat[qc_index][:, 0], dat[qc_index][:, 1], color='r', label='QC'
-        )
-        ax.scatter(
             dat[sub_index][:, 0], dat[sub_index][:, 1], color='gray',
             label='subject'
+        )
+        ax.scatter(
+            dat[qc_index][:, 0], dat[qc_index][:, 1], color='r', label='QC'
         )
         ax.set_xlabel('PCA 1')
         ax.set_ylabel('PCA 2')
