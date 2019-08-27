@@ -47,11 +47,11 @@ class Config:
             help="瓶颈层中不包含batch effect信息的节点数量，默认是90"
         )
         self.parser.add_argument(
-            '--ae_disc_train_num', type=int, default=(1, 2), nargs=2,
-            help="autoencode部分和discriminate部分训练次数的比例，默认是1:2"
+            '--ae_disc_train_num', type=int, default=(1, 1), nargs=2,
+            help="autoencode部分和discriminate部分训练次数的比例，默认是1:1"
         )
         self.parser.add_argument(
-            '--ae_disc_lr', type=float, default=(0.01, 0.1), nargs=2,
+            '--ae_disc_lr', type=float, default=(0.001, 0.01), nargs=2,
             help=(
                 "autoencode部分和discriminate部"
                 "分训练时使用的lr，默认是0.01和0.1"
@@ -62,8 +62,8 @@ class Config:
             help="使用此参数则表示不根据metric进行选择得到最好的模型"
         )
         self.parser.add_argument(
-            '--autoencode_weight', type=float, default=0.9,
-            help="重建误差权重，对抗权重是1-它，默认是0.9"
+            '--autoencode_weight', type=float, default=5,
+            help="重建误差权重，对抗权重是1，默认是5"
         )
         if pred:
             self.parser.add_argument(

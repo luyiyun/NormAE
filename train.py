@@ -7,13 +7,18 @@ import torch
 import torch.nn as nn
 import torch.utils.data as data
 import torch.optim as optim
-import progressbar as pb
+import numpy as np
 import pandas as pd
+from tqdm import tqdm
+import matplotlib; matplotlib.use('Pdf')
+import matplotlib.pyplot as plt
 
 from datasets import MetaBatchEffect
 from networks import Coder
 import transfer as T
 import metrics as mm
+from visual import VisObj
+from sklearn.decomposition import PCA
 
 
 class NoneScheduler:
@@ -26,146 +31,171 @@ class NoneScheduler:
 
 class BatchEffectTrainer:
     def __init__(
-        self, models, criterions, optimizers, scheduler=NoneScheduler(None),
+        self, in_features, bottle_num, no_be_num, lrs=0.01, bs=64, nw=6,
         epoch=100, device=torch.device('cuda:0'), l2=0.0, clip_grad=False,
-        ae_disc_train_num=(1, 2), no_best=False, autoencode_weight=0.5
+        ae_disc_train_num=(1, 1), no_best=False, autoencode_weight=0.5
     ):
-        # 初始化使用的标准和保存的参数
-        if not no_best:
-            self.best_metric = 0.0
-            self.best_models_wts = {
-                k: copy.deepcopy(v.state_dict())
-                for k, v in models.items()
-            }
 
         # 得到3个模型
-        self.models = {k: v.to(device) for k, v in models.items()}
+        self.models = {
+            'encoder': Coder(
+                in_features, bottle_num, block_num=4, norm=None, dropout=0.0
+            ).to(device),
+            'decoder': Coder(
+                bottle_num, in_features, block_num=4, norm=None, dropout=0.0
+            ).to(device),
+            'discriminator': Coder(
+                no_be_num, 4, block_num=2, spectral_norm=False, norm='BN'
+            ).to(device)
+            # 'discriminator': nn.Sequential(
+            #     nn.Linear(no_be_num, 50),
+            #     nn.LeakyReLU(),
+            #     nn.Linear(50, 50),
+            # ).to(device)
+        }
+        # self.models['discriminator'].in_f = no_be_num
 
         # 得到两个loss
-        self.criterions = criterions
+        self.criterions = {
+            'adversarial': nn.CrossEntropyLoss(),
+            'reconstruction': nn.MSELoss()
+        }
 
         # 得到两个optim
-        self.optimizers = optimizers
+        if not isinstance(lrs, (tuple, list)):
+            lrs = [lrs] * 2
+        self.optimizers = {
+            'autoencode': optim.Adam(
+                chain(
+                    self.models['encoder'].parameters(),
+                    self.models['decoder'].parameters()
+                ),
+                lr=lrs[0]
+            ),
+            'discriminate': optim.Adam(
+                self.models['discriminator'].parameters(), lr=lrs[1]
+            )
+        }
 
         # 初始化结果记录
         self.history = {
-            'train_autoencode_loss': [], 'train_discriminate_loss': [],
-            'qc_discriminate_loss': [], 'qc_distance': []
+            'autoencode_loss': [], 'discriminate_loss': [],
+            'reconstruction_loss': []
         }
 
         # 属性化
         self.epoch = epoch
         self.device = device
-        self.scheduler = scheduler
         self.clip_grad = clip_grad
         self.autoencode_train_num, self.discriminate_train_num = \
             ae_disc_train_num
-        self.no_best = no_best
         self.autoencode_weight = autoencode_weight
+        self.bs = bs
+        self.nw = nw
 
-    def fit(self, dataloaders):
-        epoch_metric = 0.0
-        for e in range(self.epoch):
-            for phase in ['train', 'qc']:
-                if phase == 'train':
-                    if isinstance(
-                        self.scheduler, optim.lr_scheduler.ReduceLROnPlateau
-                    ):
-                        self.scheduler.step(epoch_metric)
-                    else:
-                        self.scheduler.step()
-                    for model in self.models.values():
-                        model.train()
-                    prefix = "Train: "
-                else:
-                    for model in self.models.values():
-                        model.eval()
-                    prefix = "Valid: "
-                # progressbar
-                batch_text = pb.FormatCustomText(
-                    'Batch: %(batch)s  Loss: %(loss).4f',
-                    dict(batch='discriminate', loss=0.)
-                )
-                widgets = [
-                    prefix, " ", pb.Percentage(),
-                    ' ', pb.SimpleProgress(
-                        format='(%s)' % pb.SimpleProgress.DEFAULT_FORMAT
-                    ),
-                    ' ', pb.Bar(),
-                    ' ', pb.Timer(),
-                    ' ', pb.AdaptiveETA(),
-                    ' ', batch_text
-                ]
-                iterator = pb.progressbar(dataloaders[phase], widgets=widgets)
+        # 可视化工具
+        self.visobj = VisObj()
 
-                # 创建两个计数的变量，用来决定进行autoencode还是discriminator的训练
-                discriminate_index, autoencode_index = 0, 0
+    def fit(self, datas):
+        ''' datas是多个Dataset对象的可迭代对象 '''
+        # 实例化一个pca estimator，用于训练时实时的将数据进行可视化
+        pca = PCA(2)
+        # 将Dataset对象变成Dataloader对象
+        dataloaders = {}
+        for k, v in datas.items():
+            dataloaders[k] = data.DataLoader(
+                v, batch_size=self.bs, num_workers=self.nw)
 
-                # train和valid阶段创建不同的metrics来记录loss和评价指标
-                if phase == 'train':
-                    self.metrics = {
-                        'train_autoencode_loss': mm.Loss(),
-                        'train_discriminate_loss': mm.Loss(),
-                    }
-                else:
-                    self.metrics = {
-                        'qc_discriminate_loss': mm.Loss(),
-                        'qc_distance': mm.MeanDistance()
-                    }
+        # 开始进行多个epoch训练
+        for _ in tqdm(range(self.epoch), 'Epoch: '):
+            ## train phase
+            # reset = True  # 用于visdom的方法，绘制batch的loss曲线，指示是否是append的
+            # 实例化3个loss对象，用于计算epoch loss
+            ad_loss_obj = mm.Loss()
+            ae_loss_obj = mm.Loss()
+            recon_loss_obj = mm.Loss()
+            # 训练时需要将模型更改至训练状态
+            for model in self.models.values():
+                model.train()
+            # 循环每个batch进行训练
+            for batch_x, batch_y in tqdm(dataloaders['train'], 'Batch: '):
+                batch_x = batch_x.to(self.device, torch.float)
+                batch_y = batch_y.to(self.device, torch.long).squeeze()
+                for optimizer in self.optimizers.values():
+                    optimizer.zero_grad()
+                for _ in range(self.discriminate_train_num):
+                    ad_loss = self._forward_discriminate(batch_x, batch_y)
+                for _ in range(self.autoencode_train_num):
+                    ae_loss, recon_loss, _ = self._forward_autoencode(
+                        batch_x, batch_y)
+                # 记录loss(这样，就算update了多次loss，也只记录最后一次)
+                ad_loss_obj.add(ad_loss, batch_x.size(0))
+                ae_loss_obj.add(ae_loss, batch_x.size(0))
+                recon_loss_obj.add(recon_loss, batch_x.size(0))
+                # 可视化batch loss
+                # self.visobj.add_batch_loss(
+                #     reset, ad=ad_loss, ae=ae_loss, recon=recon_loss)
+                # reset = False
 
-                # 对每个batch进行相应的操作
-                batch_phase = 'discriminate'
-                for batch_x, batch_y in iterator:
-                    batch_x = batch_x.to(self.device, torch.float)
-                    batch_y = batch_y.to(self.device, torch.long).squeeze()
-                    if phase == 'train':
-                        for optimizer in self.optimizers.values():
-                            optimizer.zero_grad()
-                        if batch_phase == 'discriminate':
-                            self._forward_discriminate(
-                                batch_x, batch_y, batch_text)
-                            discriminate_index += 1
-                            if (
-                                discriminate_index >=
-                                self.discriminate_train_num
-                            ):
-                                batch_phase = 'autoencode'
-                        elif batch_phase == 'autoencode':
-                            self._forward_autoencode(
-                                batch_x, batch_y, batch_text)
-                            autoencode_index += 1
-                            if (
-                                autoencode_index >=
-                                self.autoencode_train_num
-                            ):
-                                batch_phase = 'discriminate'
-                    else:
-                        self._forward_qc(batch_x, batch_y, batch_text)
+            # 记录并可视化epoch loss
+            self.history['autoencode_loss'].append(ae_loss_obj.value())
+            self.history['discriminate_loss'].append(ad_loss_obj.value())
+            self.history['reconstruction_loss'].append(recon_loss_obj.value())
+            self.visobj.add_epoch_loss(
+                ae=self.history['autoencode_loss'][-1],
+                ad=self.history['discriminate_loss'][-1],
+                recon=self.history['reconstruction_loss'][-1]
+            )
 
-                if phase == 'train':
-                    self.history['train_autoencode_loss'].append(
-                        self.metrics['train_autoencode_loss'].value())
-                    self.history['train_discriminate_loss'].append(
-                        self.metrics['train_discriminate_loss'].value())
-                else:
-                    self.history['qc_discriminate_loss'].append(
-                        self.metrics['qc_discriminate_loss'].value())
-                    self.history['qc_distance'].append(
-                        self.metrics['qc_distance'].value())
-                    epoch_metric = self.history['qc_distance'][-1]
-                    print('Epoch: %d, qc_distance: %.4f' % (e, epoch_metric))
 
-            if not self.no_best:
-                self._record_best_models(epoch_metric)
+            ## valid phase
+            reses = self.transform(
+                dataloaders['train'], dataloaders['qc'], return_ori=True)
+            x_recons = []
+            x_oris = []
+            for (x_recon, x_ori), phase in zip(reses, ['train', 'qc']):
+                x_recon = x_recon.cpu().numpy()
+                x_ori = x_ori.cpu().numpy()
+                x_recons.append(x_recon)
+                x_oris.append(x_ori)
+            x_oris = np.concatenate(x_oris)
+            x_recons = np.concatenate(x_recons)
+            x_oris_pca = pca.fit_transform(x_oris)
+            x_recons_pca = pca.fit_transform(x_recons)
 
-        if not self.no_best:
-            print("Best metric: %.4f" % self.best_metric)
-            for k, v in self.models.items():
-                v.load_state_dict(self.best_models_wts[k])
+            train_index = slice(0, len(datas['train']))
+            qc_index = slice(
+                len(datas['train']),
+                len(datas['train'])+len(datas['qc'])
+            )
+            _, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(14, 7))
+            ax1.scatter(
+                x_oris_pca[train_index, 0], x_oris_pca[train_index, 1],
+                c='skyblue', alpha=0.7, label='Original'
+            )
+            ax1.scatter(
+                x_recons_pca[train_index, 0], x_recons_pca[train_index, 1],
+                c='orange', alpha=0.7, label='Recon'
+            )
+            ax2 = plt.subplot(1, 2, 2)
+            ax2.scatter(
+                x_oris_pca[qc_index, 0], x_oris_pca[qc_index, 1],
+                c='skyblue', alpha=0.7, label='Original'
+            )
+            ax2.scatter(
+                x_recons_pca[qc_index, 0], x_recons_pca[qc_index, 1],
+                c='orange', alpha=0.7, label='Recon'
+            )
+            ax1.set_title('Train')
+            ax2.set_title('QC')
+            ax1.legend()
+            ax2.legend()
+            self.visobj.vis.matplot(plt, win='PCA', opts={'title': 'PCA'})
+            plt.close()
 
         return self.models, self.history
 
-    def _forward_autoencode(self, batch_x, batch_y, batch_text):
+    def _forward_autoencode(self, batch_x, batch_y):
         with torch.set_grad_enabled(True):
             hidden = self.models['encoder'](batch_x)
             batch_x_recon = self.models['decoder'](hidden)
@@ -176,9 +206,9 @@ class BatchEffectTrainer:
             reconstruction_loss = self.criterions['reconstruction'](
                 batch_x_recon, batch_x)
             adversarial_loss = self.criterions['adversarial'](logit, batch_y)
-            # 排序做的不好，说明这写维度中没有批次的信息，批次的信息都在后面的维度中
-            all_loss = self.autoencode_weight*reconstruction_loss - \
-                (1-self.autoencode_weight)*adversarial_loss
+            # 分类做的不好，说明这写维度中没有批次的信息，批次的信息都在后面的维度中
+            all_loss = self.autoencode_weight * reconstruction_loss - \
+                adversarial_loss
         all_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -188,10 +218,9 @@ class BatchEffectTrainer:
                 ), max_norm=1
             )
         self.optimizers['autoencode'].step()
-        self.metrics['train_autoencode_loss'].add(all_loss, batch_x.size(0))
-        batch_text.update_mapping(loss=all_loss.item(), batch='autoencode')
+        return all_loss, reconstruction_loss, adversarial_loss
 
-    def _forward_discriminate(self, batch_x, batch_y, batch_text):
+    def _forward_discriminate(self, batch_x, batch_y):
         with torch.set_grad_enabled(False):
             hidden = self.models['encoder'](batch_x)
         with torch.set_grad_enabled(True):
@@ -203,24 +232,33 @@ class BatchEffectTrainer:
             nn.utils.clip_grad_norm_(
                 self.models['discriminator'].parameters(), max_norm=1)
         self.optimizers['discriminate'].step()
-        self.metrics['train_discriminate_loss'].add(
-            adversarial_loss, batch_x.size(0))
-        batch_text.update_mapping(
-            loss=adversarial_loss.item(), batch='discriminate')
+        return adversarial_loss
 
-    def _forward_qc(self, batch_x, batch_y, batch_text):
-        with torch.no_grad():
-            no_batch_num = self.models['discriminator'].in_f
-            hidden = self.models['encoder'](batch_x)
-            hidden[:, no_batch_num:] = 0.
-            batch_x_recon = self.models['decoder'](hidden)
-            logit = self.models['discriminator'](hidden[:, :no_batch_num])
-            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
-        self.metrics['qc_discriminate_loss'].add(
-            adversarial_loss, batch_x.size(0))
-        self.metrics['qc_distance'].add(batch_x_recon)
-        batch_text.update_mapping(
-            loss=adversarial_loss.item(), batch='autoencode')
+    def transform(self, *dataloaders, return_ori=False):
+        no_batch_num = self.models['discriminator'].in_f
+        for m in self.models.values():
+            m.eval()
+        for dataloader in dataloaders:
+            with torch.no_grad():
+                x_recon = []
+                if return_ori:
+                    x_ori = []
+                for batch_x in dataloader:
+                    if isinstance(batch_x, (tuple, list)):
+                        batch_x = batch_x[0]
+                    batch_x = batch_x.to(self.device, torch.float)
+                    hidden = self.models['encoder'](batch_x)
+                    hidden[:, no_batch_num:] = 0
+                    batch_x_recon = self.models['decoder'](hidden)
+                    x_recon.append(batch_x_recon)
+                    if return_ori:
+                        x_ori.append(batch_x)
+                x_recon = torch.cat(x_recon)
+                if return_ori:
+                    x_ori = torch.cat(x_ori)
+                    yield x_recon, x_ori
+                else:
+                    yield x_recon
 
     def _record_best_models(self, epoch_metric):
         if epoch_metric < self.best_metric:
@@ -261,60 +299,28 @@ def main():
         )
     )
     subject_dat, qc_dat = meta_data.split_qc()
-    dataloaders = {
-        'train': data.DataLoader(
-            subject_dat, batch_size=config.args.batch_size,
-            num_workers=config.args.num_workers, shuffle=True
-        ),
-        'qc': data.DataLoader(
-            qc_dat, batch_size=config.args.batch_size,
-            num_workers=config.args.num_workers, shuffle=False
-        ),
-    }
-
-    # ----- 构建网络和优化器 -----
-    in_f = meta_data.num_features
-    encoder = Coder(in_f, config.args.bottle_num)
-    decoder = Coder(config.args.bottle_num, in_f)
-    discriminator = Coder(
-        config.args.no_batch_num, 4, block_num=2,
-        spectral_norm=True
-    )
-    models = {
-        'encoder': encoder, 'decoder': decoder, 'discriminator': discriminator}
-
-    adversarial_criterion = nn.CrossEntropyLoss()
-    reconstruction_criterion = nn.MSELoss()
-    criterions = {
-        'adversarial': adversarial_criterion,
-        'reconstruction': reconstruction_criterion
-    }
-
-    ae_lr, disc_lr = config.args.ae_disc_lr
-    reconstruction_optim = optim.Adamax(
-        chain(encoder.parameters(), decoder.parameters()),
-        lr=ae_lr
-    )
-    adversarial_optim = optim.Adamax(
-        discriminator.parameters(), lr=disc_lr)
-    optimizers = {
-        'autoencode': reconstruction_optim, 'discriminate': adversarial_optim}
+    datas = {'train': subject_dat, 'qc': qc_dat}
 
     # ----- 训练网络 -----
     trainer = BatchEffectTrainer(
-        models, criterions, optimizers, epoch=config.args.epoch,
+        subject_dat.num_features, config.args.bottle_num,
+        config.args.no_batch_num, lrs=config.args.ae_disc_lr,
+        bs=config.args.batch_size, nw=config.args.num_workers,
+        epoch=config.args.epoch, device=torch.device('cuda:0'),
+        l2=0.0, clip_grad=True,
         ae_disc_train_num=config.args.ae_disc_train_num,
-        no_best=config.args.no_best,
-        autoencode_weight=config.args.autoencode_weight
+        no_best=False, autoencode_weight=config.args.autoencode_weight
+
     )
-    best_models, hist = trainer.fit(dataloaders)
+
+    best_models, hist = trainer.fit(datas)
     print('')
 
     # 保存结果
-    dirname = check_update_dirname(config.args.save)
-    torch.save(best_models, os.path.join(dirname, 'models.pth'))
-    pd.DataFrame(hist).to_csv(os.path.join(dirname, 'train.csv'))
-    config.save(os.path.join(dirname, 'config.json'))
+    # dirname = check_update_dirname(config.args.save)
+    # torch.save(best_models, os.path.join(dirname, 'models.pth'))
+    # pd.DataFrame(hist).to_csv(os.path.join(dirname, 'train.csv'))
+    # config.save(os.path.join(dirname, 'config.json'))
 
 
 if __name__ == "__main__":

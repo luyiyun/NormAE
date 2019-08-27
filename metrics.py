@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torchnet.meter.meter import Meter
-
-from sksurv.metrics import concordance_index_censored
+import sklearn.metrics as metrics
 
 
 class Loss(Meter):
@@ -26,6 +25,59 @@ class Loss(Meter):
 
     def value(self):
         return self.running_loss / self.num_samples
+
+
+class SklearnMeter:
+    def __init__(
+        self, func, tensor=None, proba2int=True, reduction='mean'
+    ):
+        super(SklearnMeter, self).__init__()
+        self.proba2int = proba2int
+        self.func = func
+        self.tensor = tensor
+        self.reset()
+
+    def __call__(self, output, target):
+        self.reset()
+        self.add(output, target)
+        res = self.value()
+        self.reset()
+        return res
+
+    def reset(self):
+        self.outputs = []
+        self.targets = []
+        self.ids = []
+
+    def add(self, output, target):
+        if self.tensor is None:
+            self.tensor = isinstance(output, torch.Tensor)
+        if self.tensor:
+            output = output.detach().cpu().numpy()
+            target = target.detach().cpu().numpy()
+        self.outputs.append(output)
+        self.targets.append(target)
+
+    def value(self):
+        outputs = np.concatenate(self.outputs, axis=0)
+        targets = np.concatenate(self.targets, axis=0)
+        if self.proba2int:
+            outputs = outputs.argmax(axis=1)
+        return self.func(targets, outputs)
+
+
+class Accuracy(SklearnMeter):
+    def __init__(self, proba2int=True, tensor=None):
+        def func(y_true, y_pred):
+            return metrics.accuracy_score(y_true, y_pred)
+        super(Accuracy, self).__init__(func, tensor, proba2int)
+
+
+class BalancedAccuracy(SklearnMeter):
+    def __init__(self, proba2int=True, tensor=None):
+        def func(y_true, y_pred):
+            return metrics.balanced_accuracy_score(y_true, y_pred)
+        super(BalancedAccuracy, self).__init__(func, tensor, proba2int)
 
 
 class MeanDistance(Meter):

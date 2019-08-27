@@ -29,7 +29,7 @@ class ResBotBlock(nn.Module):
     '''
     def __init__(
         self, input_shape, act, bottle_units, bottle_act=None, dropout=0.5,
-        spectral_norm=False
+        spectral_norm=False, norm=None
     ):
         super(ResBotBlock, self).__init__()
         if not isinstance(bottle_units, (tuple, list)):
@@ -47,7 +47,12 @@ class ResBotBlock(nn.Module):
             if i != (len(bottle_units) - 1):
                 self.bottle_modules.append(act)
         self.bottle_modules = nn.Sequential(*self.bottle_modules)
-        self.bn = nn.BatchNorm1d(input_shape)
+        if norm == 'BN':
+            self.bn = nn.BatchNorm1d(input_shape)
+        elif norm == 'IN':
+            self.bn = nn.InstanceNorm1d(input_shape)
+        else:
+            self.bn = nn.Identity()
 
     def forward(self, x):
         identity = x
@@ -59,7 +64,7 @@ class ResBotBlock(nn.Module):
 class Coder(nn.Module):
     def __init__(
         self, in_f, out_f, hidden_unit=500, block_num=5, bottle_unit=50,
-        dropout=0.5, spectral_norm=False
+        dropout=0.5, spectral_norm=False, norm=None
     ):
         super(Coder, self).__init__()
         self.in_f = in_f
@@ -70,7 +75,7 @@ class Coder(nn.Module):
             modules.append(
                 ResBotBlock(
                     hidden_unit, act, bottle_units, dropout=dropout,
-                    spectral_norm=spectral_norm
+                    spectral_norm=spectral_norm, norm=norm
                 )
             )
             modules.append(act)
