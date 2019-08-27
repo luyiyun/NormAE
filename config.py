@@ -62,8 +62,8 @@ class Config:
             help="使用此参数则表示不根据metric进行选择得到最好的模型"
         )
         self.parser.add_argument(
-            '--autoencode_weight', type=float, default=5,
-            help="重建误差权重，对抗权重是1，默认是5"
+            '--ae_disc_weight', type=float, default=(1, 5), nargs=2,
+            help="重建误差权重和对抗权重，默认是1.0和5.0"
         )
         if pred:
             self.parser.add_argument(

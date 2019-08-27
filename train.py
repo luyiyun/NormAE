@@ -33,7 +33,7 @@ class BatchEffectTrainer:
     def __init__(
         self, in_features, bottle_num, no_be_num, lrs=0.01, bs=64, nw=6,
         epoch=100, device=torch.device('cuda:0'), l2=0.0, clip_grad=False,
-        ae_disc_train_num=(1, 1), no_best=False, autoencode_weight=0.5
+        ae_disc_train_num=(1, 1), no_best=False, ae_disc_weight=(1.0, 5.0)
     ):
 
         # 得到3个模型
@@ -89,9 +89,10 @@ class BatchEffectTrainer:
         self.clip_grad = clip_grad
         self.autoencode_train_num, self.discriminate_train_num = \
             ae_disc_train_num
-        self.autoencode_weight = autoencode_weight
+        self.ae_weight, self.disc_weight = ae_disc_weight
         self.bs = bs
         self.nw = nw
+        self.no_be_num = no_be_num
 
         # 可视化工具
         self.visobj = VisObj()
@@ -200,15 +201,14 @@ class BatchEffectTrainer:
             hidden = self.models['encoder'](batch_x)
             batch_x_recon = self.models['decoder'](hidden)
         with torch.set_grad_enabled(False):
-            no_batch_num = self.models['discriminator'].in_f
-            logit = self.models['discriminator'](hidden[:, :no_batch_num])
+            logit = self.models['discriminator'](hidden[:, :self.no_be_num])
         with torch.set_grad_enabled(True):
             reconstruction_loss = self.criterions['reconstruction'](
                 batch_x_recon, batch_x)
             adversarial_loss = self.criterions['adversarial'](logit, batch_y)
             # 分类做的不好，说明这写维度中没有批次的信息，批次的信息都在后面的维度中
-            all_loss = self.autoencode_weight * reconstruction_loss - \
-                adversarial_loss
+            all_loss = self.ae_weight * reconstruction_loss - \
+                self.disc_weight * adversarial_loss
         all_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -224,8 +224,7 @@ class BatchEffectTrainer:
         with torch.set_grad_enabled(False):
             hidden = self.models['encoder'](batch_x)
         with torch.set_grad_enabled(True):
-            no_batch_num = self.models['discriminator'].in_f
-            logit = self.models['discriminator'](hidden[:, :no_batch_num])
+            logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             adversarial_loss = self.criterions['adversarial'](logit, batch_y)
         adversarial_loss.backward()
         if self.clip_grad:
@@ -235,7 +234,6 @@ class BatchEffectTrainer:
         return adversarial_loss
 
     def transform(self, *dataloaders, return_ori=False):
-        no_batch_num = self.models['discriminator'].in_f
         for m in self.models.values():
             m.eval()
         for dataloader in dataloaders:
@@ -248,7 +246,7 @@ class BatchEffectTrainer:
                         batch_x = batch_x[0]
                     batch_x = batch_x.to(self.device, torch.float)
                     hidden = self.models['encoder'](batch_x)
-                    hidden[:, no_batch_num:] = 0
+                    hidden[:, self.no_be_num:] = 0
                     batch_x_recon = self.models['decoder'](hidden)
                     x_recon.append(batch_x_recon)
                     if return_ori:
@@ -309,7 +307,7 @@ def main():
         epoch=config.args.epoch, device=torch.device('cuda:0'),
         l2=0.0, clip_grad=True,
         ae_disc_train_num=config.args.ae_disc_train_num,
-        no_best=False, autoencode_weight=config.args.autoencode_weight
+        no_best=False, ae_disc_weight=config.args.ae_disc_weight
 
     )
 

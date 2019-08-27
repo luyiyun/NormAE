@@ -58,19 +58,19 @@ class OrdinalCls:
                 self.history[phase]['acc'].append(acc_obj.value())
             self.vis.line(
                 X=[e], Y=[[
-                    self.history['train']['loss'][-1],
-                    self.history['test']['loss'][-1]
+                    self.history[phase]['loss'][-1]
+                    for phase in dats.keys()
                 ]],
                 update=None if e == 0 else 'append', win='loss',
-                opts={'title': "Loss", 'legend': ['train', 'test']}
+                opts={'title': "Loss", 'legend': list(dats.keys())}
             )
             self.vis.line(
                 X=[e], Y=[[
-                    self.history['train']['acc'][-1],
-                    self.history['test']['acc'][-1]
+                    self.history[phase]['acc'][-1]
+                    for phase in dats.keys()
                 ]],
                 update=None if e == 0 else 'append', win='acc',
-                opts={'title': "Accuracy", 'legend': ['train', 'test']}
+                opts={'title': "Accuracy", 'legend': list(dats.keys())}
             )
         return self.history
 
@@ -89,12 +89,12 @@ def main():
             T.Normalization(), lambda x, y: (x, y - 1)
         )
     )
-    subject_dat, _ = meta_data.split_qc()
+    subject_dat, qc_dat = meta_data.split_qc()
     train_dat, test_dat = subject_dat.split(0.2)
 
     # ----- 训练网络 -----
     estimator = OrdinalCls(train_dat.num_features, 4, 64, 100)
-    hist = estimator.fit({'train': train_dat, 'test': test_dat})
+    hist = estimator.fit({'train': train_dat, 'test': test_dat, 'qc': qc_dat})
     print(hist)
 
 
