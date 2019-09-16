@@ -23,6 +23,14 @@ class LabelMapper:
         return x, y
 
 
+class MaskFilterCol:
+    def __init__(self, mask):
+        self.mask = mask
+
+    def __call__(self, x, y):
+        return x.loc[:, self.mask], y
+
+
 class ZeroFilterCol:
     def __init__(self, zero_frac=0.8):
         self.zero_frac = zero_frac

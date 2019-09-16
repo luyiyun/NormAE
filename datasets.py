@@ -43,6 +43,11 @@ class BaseData(data.Dataset):
             res.append(meta)
         return tuple(res)
 
+    def transform(self, trans):
+        self.X_df_trans, self.Y_df_trans = trans(
+            self.X_df_trans, self.Y_df_trans)
+        return self
+
     def split(
         self, test_size, valid_size=None, shuffle=True,
         random_seed=1234, train_kwargs={}, test_kwargs={}, valid_kwargs={}
@@ -160,37 +165,53 @@ class MetaBatchEffect(BaseData):
         super(MetaBatchEffect, self).__init__(X, Y, meta_df, None, pre_transfer)
 
     @staticmethod
-    def from_csv(sample_file, metabolic_file, y_names, pre_transfer=None):
+    def from_csv(sample_file, metabolic_file, pre_transfer=None):
         '''
-        cli_file：临床数据文件；
-        rna_file：RNAseq数据文件；
-        y_names：使用的y的name，可以是多个，也可以是dict，则其key是原始变量名，
-            value是更改后的变量名；
-        kwargs：用于传递至RnaData的实例化方法的其他参数;
+        sample_file: 储存injection.order、class、batch、group信息的文件路径；
+        metabolic_file：储存代谢物丰度值信息的文件路径；
+        pre_transfer：对X、Y进行转换的函数；
         '''
         # 获取标签
-        sample_index = pd.read_csv(sample_file, index_col='sample.name')
-        if isinstance(y_names, dict):
-            y = sample_index[list(y_names.keys())].dropna().rename(
-                columns=y_names)
-        else:
-            if not isinstance(y_names, (list, tuple)):
-                y_names = [y_names]
-            y = sample_index[y_names].dropna()
-        y_num = y.shape[-1]
-
+        y_df = pd.read_csv(sample_file, index_col='sample.name')
+        y_df = y_df.dropna()
+        y_num = y_df.shape[-1]
         # 获取代谢数据
         meta_df = pd.read_csv(
             metabolic_file, index_col='name').drop(['mz', 'rt'], axis=1)
         meta_df = meta_df.T.rename_axis(index='sample', columns='meta')
         # 进行merge
-        all_df = y.merge(
+        all_df = y_df.merge(
             meta_df, how='inner', left_index=True, right_index=True)
 
-        return MetaBatchEffect(
-            all_df.iloc[:, y_num:], all_df.iloc[:, :y_num],
-            pre_transfer=pre_transfer
-        )
+        # 28法则去除全部样本中0数量较多的变量
+        meta_df, y_df = all_df.iloc[:, y_num:], all_df.iloc[:, :y_num]
+        mask1 = (meta_df == 0).mean(axis=0) < 0.2
+        meta_df = meta_df.loc[:, mask1]
+        # 28法则去除QC样本中0数量较多的变量
+        qc_mask = y_df['class'] == 'QC'
+        qc_meta_df = meta_df.loc[qc_mask, :]
+        mask2 = (qc_meta_df == 0).mean(axis=0) < 0.2
+        meta_df = meta_df.loc[:, mask2]
+        # 对于每个变量，使用其除了0以外的最小值的1/2来填补其0值
+        def impute_zero(x):
+            zero_mask = x == 0
+            if zero_mask.any():
+                new_x = x.copy()
+                impute_value = x.loc[~zero_mask].min()
+                new_x[zero_mask] = impute_value / 2
+                return new_x
+            return x
+        meta_df = meta_df.apply(impute_zero, axis=0)
+
+        # y包括injection order和batch，还有group，用于重建之后的评价
+        y_df = y_df.loc[:, ['injection.order', 'batch', 'group']]
+        # batch是从1开始的，但pytorch使用的标签是从0开始
+        y_df.loc[:, 'batch'] -= 1
+        # 为了能够输出到torch的系统中，对group进行一下改进, -1表示qc
+        y_df.loc[y_df['group'] == 'QC', 'group'] = "-1"
+        y_df['group'] = y_df['group'].astype('int')
+
+        return MetaBatchEffect(meta_df, y_df, pre_transfer=pre_transfer)
 
     @property
     def num_features(self):
@@ -210,31 +231,54 @@ class MetaBatchEffect(BaseData):
         )
 
 
+class Demo(BaseData):
+    def __init__(self, X, Y, meta_df=None, pre_transfer=None):
+        super(Demo, self).__init__(X, Y, meta_df, None, pre_transfer)
+
+    @staticmethod
+    def from_csv(file_name, pre_transfer=None):
+        '''
+        sample_file: 储存injection.order、class、batch、group信息的文件路径；
+        metabolic_file：储存代谢物丰度值信息的文件路径；
+        pre_transfer：对X、Y进行转换的函数；
+        '''
+        df = pd.read_csv(file_name)
+        df = df.T
+        Y_df, X_df = df.iloc[:, [0]], df.iloc[:, 1:]
+        return Demo(X_df, Y_df, pre_transfer=pre_transfer)
+
+    @property
+    def num_features(self):
+        return self.X_df_trans.shape[1]
+
+
 def test():
     import sys
     import time
 
-    sample_file = "./DATA/metabolic/sample.information.T3.csv"
-    meta_file = "./DATA/metabolic/data_T3原始数据.csv"
-    t1 = time.perf_counter()
-    data = MetaBatchEffect.from_csv(
-        sample_file, meta_file, 'batch'
-    )
-    t2 = time.perf_counter()
-    print(t2 - t1)
-    subject_dat, qc_dat = data.split_qc()
-    print(subject_dat.X_df_trans.head())
-    print(subject_dat.Y_df_trans.head())
-    print(qc_dat.X_df_trans.head())
-    print(qc_dat.Y_df_trans.head())
+    # sample_file = "./DATA/metabolic/sample.information.T3.csv"
+    # meta_file = "./DATA/metabolic/data_T3原始数据.csv"
+    # t1 = time.perf_counter()
+    # data = MetaBatchEffect.from_csv(sample_file, meta_file)
+    # t2 = time.perf_counter()
+    # print(t2 - t1)
+    # subject_dat, qc_dat = data.split_qc()
+    # print(subject_dat.X_df_trans.head())
+    # print(subject_dat.Y_df_trans.head())
+    # print(qc_dat.X_df_trans.head())
+    # print(qc_dat.Y_df_trans.head())
 
-    print(subject_dat[0])
-    print(qc_dat[0])
+    # print(subject_dat[0])
+    # print(qc_dat[0])
 
-    print(len(subject_dat))
-    print(subject_dat.num_features)
-    print(len(qc_dat))
-    print(qc_dat.num_features)
+    # print(len(subject_dat))
+    # print(subject_dat.num_features)
+    # print(len(qc_dat))
+    # print(qc_dat.num_features)
+
+    sample_file = './DATA/Demo/sample.csv'
+    qc_file = './DATA/Demo/qc.csv'
+    test_data = Demo.from_csv(sample_file, qc_file)
 
 
 if __name__ == "__main__":
