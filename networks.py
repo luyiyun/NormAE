@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 ''' 网络结构部分 '''
@@ -133,101 +132,100 @@ class SimpleCoder(nn.Module):
 ''' Loss '''
 
 
+class CEwithLabelSmooth(nn.Module):
+    '''
+    带有标签平滑的判别loss，如果smoothing=0则就是普通的ce，如果不=0，则对于当前
+    样本，如果其标签是0, 则标签使用(1-lambda, lambda, lambda, lambda)，其中
+    lambda是从uniform(o, smoothing)中采样得到
+    '''
+    def __init__(self, smoothing=0.0):
+        super(CEwithLabelSmooth, self).__init__()
+        self.smoothing = smoothing
+        self.log_softmax = nn.LogSoftmax()
+        if smoothing == 0.0:
+            self.criterion = nn.CrossEntropyLoss()
+        else:
+            self.criterion = nn.KLDivLoss(reduction='batchmean')
+
+    def forward(self, pred, target):
+        ''' 注意，这里的pred是预测的分类部分 '''
+        use_target = target[:, 1].long()
+        if self.smoothing == 0.0:
+            return self.criterion(pred, use_target)
+        else:
+            size = pred.size(1)
+            pseudo_identity = torch.empty((size, size))
+            pseudo_identity.uniform_(0, self.smoothing)
+            pseudo_identity = torch.eye(size) - pseudo_identity
+            pseudo_identity.abs_()
+            true_dist = pseudo_identity[use_target].to(input)
+            return self.criterion(self.log_softmax(input), true_dist)
+
+
 class RankLoss(nn.Module):
-    def __init__(self, reduction='mean', classification=None):
+    def __init__(self, reduction='mean'):
         super(RankLoss, self).__init__()
         if reduction == 'mean':
             self.agg_func = torch.mean
         elif reduction == 'sum':
             self.agg_func = torch.sum
-        self.classification = (classification is not None)
-        if self.classification:
-            self.ce = classification
 
-    def forward(self, pred, rank_batch):
-        if self.classification:
-            pred_rank, pred_cls = pred[:, 0], pred[:, 1:]
-        else:
-            pred_rank = pred
+    def forward(self, pred, target):
+        ''' 注意，这里的pred是预测的排序部分 '''
         # rank loss
-        low, high = self._comparable_pairs(rank_batch)
-        low_pred, high_pred = pred_rank[low], pred_rank[high]
+        low, high = self._comparable_pairs(target[:, 0], target[:, 1])
+        low_pred, high_pred = pred[low], pred[high]
         diff = (1 - high_pred + low_pred).clamp(min=0)
         diff = diff ** 2
         rank_loss = self.agg_func(diff)
-        # cls loss
-        if self.classification:
-            batch_index = rank_batch[:, 1].long()
-            cls_loss = self.ce(pred_cls, batch_index)
-            return rank_loss + cls_loss
         return rank_loss
 
     @staticmethod
-    def _comparable_pairs(rank_batch):
-        ''' 得到所有样本对，其中并把排序在前的放在前面 '''
+    def _comparable_pairs(true_rank, true_batch=None):
+        '''
+        true_rank: 真实的每个样本的排序；
+        true_batch: 每个样本属于的批次标签；
+
+        这里有true_batch的意思是，只有在同一个批次内样本才有比较的必要，不在同
+        一个批次没有比较的必要。注意到，实际上我们不需要判断是否需要true_batch，
+        如果没有true_batch标签，在dataset的步骤里将其填补成-1，大家都是-1，则
+        所有的pairs都会被考虑，和不考虑true_batch的结果是一样的，但可能速度会
+        慢一些。
+        '''
         # 这里接受的rank_batch可能只有rank
-        batch_index = None
-        if rank_batch.dim() == 1:
-            truth_rank = rank_batch
-        elif rank_batch.size(1) == 1:
-            truth_rank = rank_batch[:, 0]
-        else:
-            truth_rank, batch_index = rank_batch[:, 0], rank_batch[:, 1]
-        batch_size = len(truth_rank)
+        batch_size = len(true_rank)
         indx = torch.arange(batch_size)
         pairs1 = indx.repeat(batch_size)
         pairs2 = indx.repeat_interleave(batch_size, dim=0)
         # 选择第一个小于第二个的元素
-        time_mask = truth_rank[pairs1] < truth_rank[pairs2]
+        time_mask = true_rank[pairs1] < true_rank[pairs2]
         pairs1, pairs2 = pairs1[time_mask], pairs2[time_mask]
         # 选择在一个batch的pairs
-        if batch_index is not None:
-            batch_mask = batch_index[pairs1] == batch_index[pairs2]
+        if true_batch is not None:
+            batch_mask = true_batch[pairs1] == true_batch[pairs2]
             pairs1, pairs2 = pairs1[batch_mask], pairs2[batch_mask]
         return pairs1, pairs2
 
 
-class ClassicalMSE(nn.Module):
-    '''
-    这个是和普通的mse没有区别，如果说唯一的区别，就是其接受的target是01234这样
-    的数字标签，而pred是batch x 4的tensor，所以需要先把target one-hot一下而已
-    '''
-    def __init__(self, cate_num, l1=True, **kwargs):
-        super(ClassicalMSE, self).__init__()
-        self.mse = nn.L1Loss(**kwargs) if l1 else \
-            nn.MSELoss(**kwargs)
-        self.identity_matrix = torch.arange(cate_num).diag()
+class SmoothCERankLoss(nn.Module):
+    def __init__(self, smoothing=0.2, reduction='mean', ce_w=1.0, rank_w=1.0):
+        ''' 如果ce_w=0.0默认pred中没有分类的部分，rank也是一样 '''
+        assert ce_w > 0.0 or rank_w > 0.0
+        super(SmoothCERankLoss, self).__init__()
+        self.ce_w, self.rank_w = ce_w, rank_w
+        if ce_w > 0.:
+            self.ce = CEwithLabelSmooth(smoothing)
+        if rank_w > 0.:
+            self.rank = RankLoss(reduction)
 
     def forward(self, pred, target):
-        target_oh = self.identity_matrix[target.squeeze().long()].to(pred)
-        return self.mse(pred, target_oh)
-
-
-class CustomCrossEntropy(nn.Module):
-    def __init__(self, **kwargs):
-        super(CustomCrossEntropy, self).__init__()
-        self.ce = nn.CrossEntropyLoss(**kwargs)
-
-    def forward(self, pred, target):
-        return self.ce(pred, target.to(torch.long).squeeze())
-
-
-class LabelSmoothing(nn.Module):
-    def __init__(self, size, smoothing=0.0):
-        super(LabelSmoothing, self).__init__()
-        self.size = size
-        self.smoothing = smoothing
-        self.criterion = nn.KLDivLoss(reduction='batchmean')
-        self.log_softmax = nn.LogSoftmax(dim=1)
-
-    def forward(self, input, target):
-        self.pseudo_identity = torch.empty((self.size, self.size))
-        self.pseudo_identity.uniform_(0, self.smoothing)
-        self.pseudo_identity = torch.eye(self.size) - self.pseudo_identity
-        self.pseudo_identity.abs_()
-        target = target.long()
-        true_dist = self.pseudo_identity[target].to(input)
-        return self.criterion(self.log_softmax(input), true_dist)
+        if self.ce_w > 0. and self.rank_w > 0.:
+            pred_rank, pred_cls = pred[:, 0], pred[:, 1:]
+            return self.rank(pred_rank, target) + self.ce(pred_cls, target)
+        elif self.ce_w > 0.:
+            return self.ce(pred, target)
+        elif self.rank_w > 0.:
+            return self.rank(pred, target)
 
 
 def test():
@@ -237,25 +235,8 @@ def test():
     # print(res.shape)
 
 
-    # truth = torch.randperm(100)
-    # pred = torch.rand(100)
-    # criterion = RankLoss()
-    # print(criterion(truth, pred))
-    # print(truth)
-    # print(pred)
-    # pred, _ = pred.sort()
-    # truth, _ = truth.sort()
-    # print(criterion(truth, pred))
-    # print(truth)
-    # print(pred)
-    crit = LabelSmoothing(size=5, smoothing=0.1)
-    predict = torch.tensor([
-        [0, 0.2, 0.7, 0.1, 0],
-        [0, 0.9, 0.2, 0.1, 0],
-        [1, 0.2, 0.7, 0.1, 0]
-    ])
-    v = crit(predict.log(), torch.tensor([2, 1, 0], dtype=torch.long))
-    print(v)
+    # rank and ce
+    pass
 
 
 if __name__ == '__main__':

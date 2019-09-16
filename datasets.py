@@ -37,6 +37,10 @@ class BaseData(data.Dataset):
     def num_features(self):
         return self.X_df.shape[1]
 
+    @property
+    def num_batch_labels(self):
+        return len(self.Y_df['batch'].unique())
+
 
 def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     '''
