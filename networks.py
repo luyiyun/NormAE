@@ -95,7 +95,8 @@ class Coder(nn.Module):
 
 class SimpleCoder(nn.Module):
     def __init__(
-        self, units, dropout=None, norm=None, lrelu=True, last_act=None
+        self, units, dropout=None, norm=None, lrelu=True, last_act=None,
+        spectral_norm=False
     ):
         '''
         units是节点个数，其中第一个是输入维度，最后一个是输出维度
@@ -103,7 +104,10 @@ class SimpleCoder(nn.Module):
         super(SimpleCoder, self).__init__()
         model = []
         for i, (u1, u2) in enumerate(zip(units[:-1], units[1:])):
-            model.append(nn.Linear(u1, u2))
+            if spectral_norm:
+                model.append(nn.utils.spectral_norm(nn.Linear(u1, u2)))
+            else:
+                model.append(nn.Linear(u1, u2))
             if i < (len(units) - 2):  # 因为units是包括了输入层的
                 model.append(nn.LeakyReLU() if lrelu else nn.ReLU())
                 if norm is not None:

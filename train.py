@@ -28,7 +28,7 @@ class BatchEffectTrainer:
         lrs=0.01, bs=64, nw=6, epoch=100, device=torch.device('cuda:0'),
         l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
         ae_disc_weight=(1.0, 1.0), supervise='both', label_smooth=0.2,
-        train_with_qc=False
+        train_with_qc=False, spectral_norm=False
     ):
         '''
         in_features: the number of input features;
@@ -52,6 +52,7 @@ class BatchEffectTrainer:
         label_smooth: the label smooth parameter for disciminate;
         train_with_qc: if true, the dataset of training is concatenated data of
             subject and qc;
+        spectral_norm: if true, use spectral normalization for all linear layers;
         '''
 
         # 得到两个loss
@@ -77,15 +78,17 @@ class BatchEffectTrainer:
         self.models = {
             'encoder': SimpleCoder(
                 [in_features, 300, 300, 300, bottle_num], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None
+                last_act=None, norm=nn.BatchNorm1d, dropout=None,
+                spectral_norm=spectral_norm
             ).to(device),
             'decoder': SimpleCoder(
                 [bottle_num, 300, 300, 300, in_features], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None
+                last_act=None, norm=nn.BatchNorm1d, dropout=None,
+                spectral_norm=spectral_norm
             ).to(device),
             'discriminator': SimpleCoder(
                 [no_be_num, 300, 300, logit_dim], lrelu=False,
-                norm=nn.BatchNorm1d, last_act=None
+                norm=nn.BatchNorm1d, last_act=None, spectral_norm=spectral_norm
             ).to(device)
         }
 
@@ -298,7 +301,8 @@ def main():
         ae_disc_weight=config.args.ae_disc_weight,
         supervise=config.args.supervise,
         label_smooth=config.args.label_smooth,
-        train_with_qc=config.args.train_data == 'all'
+        train_with_qc=config.args.train_data == 'all',
+        spectral_norm=config.args.spectral_norm
     )
 
     best_models, hist = trainer.fit(datas)

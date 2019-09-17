@@ -84,6 +84,10 @@ class Config:
             '--label_smooth', default=0.2, type=float,
             help='label smoothing, default 0.2'
         )
+        self.parser.add_argument(
+            '--spectral_norm', action='store_true',
+            help='if use, linear layer will be spectral normalized.'
+        )
         self.args = self.parser.parse_args()
 
     def save(self, fname):
