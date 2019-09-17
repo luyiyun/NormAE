@@ -7,30 +7,27 @@ import torch.nn as nn
 import torch.optim as optim
 
 
-class NoneScheduler:
-    def __init__(self, optimizer):
-        pass
-
-    def step(self):
-        pass
-
-
 class Config:
 
-    sample_file = "./DATA/metabolic/sample.information.T3.csv"
-    meta_file = "./DATA/metabolic/data_T3原始数据.csv"
+    metabolic_y_file = "./DATA/metabolic/sample.information.T3.csv"
+    metabolic_x_file = "./DATA/metabolic/data_T3原始数据.csv"
     demo_sub_file = './DATA/Demo/sample.csv'
     demo_qc_file = './DATA/Demo/qc.csv'
 
-    def __init__(self, pred=False):
+    def __init__(self):
         self.parser = argparse.ArgumentParser()
         self.parser.add_argument(
             '-s', '--save', default='./save',
             help='保存的文件夹路径，如果有重名，会在其后加-来区别'
         )
         self.parser.add_argument(
-            '-d', '--data', default='metabolic',
+            '-t', '--task', default='metabolic',
             help="使用哪个数据，默认是metabolic，还可以是demo"
+        )
+        self.parser.add_argument(
+            '-td', '--train_data', default='subject',
+            help=("使用哪些数据作为训练数据，默认是subject，也可以是all，"
+                  "即使用所有数据来train")
         )
         self.parser.add_argument(
             '-dn', '--data_norm', default='standard',
@@ -87,9 +84,6 @@ class Config:
             '--label_smooth', default=0.2, type=float,
             help='label smoothing, default 0.2'
         )
-        if pred:
-            self.parser.add_argument(
-                '-d', '--dir', help="想要预测的模型，指的是训练完保存的文件夹")
         self.args = self.parser.parse_args()
 
     def save(self, fname):

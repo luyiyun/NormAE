@@ -141,7 +141,7 @@ class CEwithLabelSmooth(nn.Module):
     def __init__(self, smoothing=0.0):
         super(CEwithLabelSmooth, self).__init__()
         self.smoothing = smoothing
-        self.log_softmax = nn.LogSoftmax()
+        self.log_softmax = nn.LogSoftmax(dim=1)
         if smoothing == 0.0:
             self.criterion = nn.CrossEntropyLoss()
         else:
@@ -158,8 +158,8 @@ class CEwithLabelSmooth(nn.Module):
             pseudo_identity.uniform_(0, self.smoothing)
             pseudo_identity = torch.eye(size) - pseudo_identity
             pseudo_identity.abs_()
-            true_dist = pseudo_identity[use_target].to(input)
-            return self.criterion(self.log_softmax(input), true_dist)
+            true_dist = pseudo_identity[use_target].to(pred)
+            return self.criterion(self.log_softmax(pred), true_dist)
 
 
 class RankLoss(nn.Module):

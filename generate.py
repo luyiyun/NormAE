@@ -8,14 +8,13 @@ import torch.utils.data as data
 from sklearn.decomposition import FastICA
 from sklearn.feature_selection import f_classif
 
-from datasets import MetaBatchEffect
-import transfer as T
-
+from datasets import get_demo_data, get_metabolic_data
+from transfer import Normalization
 
 
 def generate(
     models, data_loader, no_be_num, bs=64, nw=12,
-    device=torch.device('cuda:0'),
+    device=torch.device('cuda:0')
 ):
     '''
     data_loaders: Dataset对象或Dataloader对象，如果是Dataset则会利用实例化
@@ -34,7 +33,7 @@ def generate(
         )
     x_recon, x_ori, x_recon_be, ys, codes = [], [], [], [], []
     with torch.no_grad():
-        for batch_x, batch_y in tqdm(data_loader):
+        for batch_x, batch_y in tqdm(data_loader, 'Transform batch: '):
             x_ori.append(batch_x)
             ys.append(batch_y)
             batch_x = batch_x.to(device, torch.float)
@@ -147,11 +146,16 @@ def main():
     print(save_json)
 
     # ----- 读取数据 -----
-    meta_data = MetaBatchEffect.from_csv(
-        Config.sample_file, Config.meta_file,
-        pre_transfer=T.Normalization(save_json['data_norm'])
-    )
-    subject_dat, qc_dat = meta_data.split_qc()
+    pre_transfer = Normalization(config.args.data_norm)
+    if save_json['task'] == 'metabolic':
+        subject_dat, qc_dat = get_metabolic_data(
+            config.metabolic_x_file, config.metabolic_y_file,
+            pre_transfer=pre_transfer
+        )
+    elif save_json['task'] == 'demo':
+        subject_dat, qc_dat = get_demo_data(
+            Config.demo_sub_file, Config.demo_qc_file, pre_transfer
+        )
 
     # ----- 读取训练好的模型 -----
     models = os.path.join(task_path, 'models.pth')
@@ -159,38 +163,31 @@ def main():
 
     # ----- 得到生成的数据 -----
     print('不使用ICA')
-    sub_res = generate(models, subject_dat, save_json['no_batch_num'],
-                       bs=save_json['batch_size'], nw=save_json['num_workers'],
-                       device=torch.device('cuda:0'))
-    qc_res = generate(models, qc_dat, save_json['no_batch_num'],
-                       bs=save_json['batch_size'], nw=save_json['num_workers'],
-                       device=torch.device('cuda:0'))
+    all_res = generate(
+        models, data.ConcatDataset([subject_dat, qc_dat]),
+        save_json['no_batch_num'], bs=save_json['batch_size'],
+        nw=save_json['num_workers'], device=torch.device('cuda:0')
+    )
     # ----- 保存 -----
-    for k, v in sub_res.items():
+    for k, v in all_res.items():
         np.savetxt(os.path.join(task_path, 'subject_res_%s.txt' % k), v)
-    for k, v in qc_res.items():
-        np.savetxt(os.path.join(task_path, 'qc_res_%s.txt' % k), v)
     print('')
 
 
     # ----- 得到生成的数据 -----
     print('使用ICA')
-    sub_res = generate_ica(models, subject_dat, save_json['no_batch_num'],
-                       bs=save_json['batch_size'], nw=save_json['num_workers'],
-                       device=torch.device('cuda:0'))
-    qc_res = generate_ica(models, qc_dat, save_json['no_batch_num'],
-                       bs=save_json['batch_size'], nw=save_json['num_workers'],
-                       device=torch.device('cuda:0'))
+    all_res = generate_ica(
+        models, data.ConcatDataset([subject_dat, qc_dat]),
+        save_json['no_batch_num'], bs=save_json['batch_size'],
+        nw=save_json['num_workers'], device=torch.device('cuda:0')
+    )
     # ----- 保存 -----
     # 原理上，也经过了检查，这里的结果出了recons_no_batch和上面的是一样的，就
     #   不进行保存了。
-    for k, v in sub_res.items():
+    for k, v in all_res.items():
         if k == 'recons_no_batch':
             np.savetxt(
                 os.path.join(task_path, 'subject_res_%s_ica.txt' % k), v)
-    for k, v in qc_res.items():
-        if k == 'recons_no_batch':
-            np.savetxt(os.path.join(task_path, 'qc_res_%s_ica.txt' % k), v)
     print('')
 
 
