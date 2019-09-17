@@ -146,10 +146,10 @@ def main():
     print(save_json)
 
     # ----- 读取数据 -----
-    pre_transfer = Normalization(config.args.data_norm)
+    pre_transfer = Normalization(save_json['data_norm'])
     if save_json['task'] == 'metabolic':
         subject_dat, qc_dat = get_metabolic_data(
-            config.metabolic_x_file, config.metabolic_y_file,
+            Config.metabolic_x_file, Config.metabolic_y_file,
             pre_transfer=pre_transfer
         )
     elif save_json['task'] == 'demo':
@@ -170,7 +170,7 @@ def main():
     )
     # ----- 保存 -----
     for k, v in all_res.items():
-        np.savetxt(os.path.join(task_path, 'subject_res_%s.txt' % k), v)
+        np.savetxt(os.path.join(task_path, 'all_res_%s.txt' % k), v)
     print('')
 
 
@@ -187,7 +187,7 @@ def main():
     for k, v in all_res.items():
         if k == 'recons_no_batch':
             np.savetxt(
-                os.path.join(task_path, 'subject_res_%s_ica.txt' % k), v)
+                os.path.join(task_path, 'all_res_%s_ica.txt' % k), v)
     print('')
 
 
