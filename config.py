@@ -88,6 +88,15 @@ class Config:
             '--spectral_norm', action='store_true',
             help='if use, linear layer will be spectral normalized.'
         )
+        self.parser.add_argument(
+            '--schedual_stones', type=int, nargs='+',
+            default=[2000], help="epochs of lrs multiply 0.1, default [2000]"
+        )
+        self.parser.add_argument(
+            '--interconnect', action='store_true',
+            help=("if use, the connect of hiddens between encoder and "
+                  "decoder will be build")
+        )
         self.args = self.parser.parse_args()
 
     def save(self, fname):

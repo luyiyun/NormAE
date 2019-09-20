@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import RandomForestClassifier
@@ -69,8 +70,9 @@ def main():
             file_name = dn + '_ica'
         else:
             file_name = dn
-        all_res[dn] = np.loadtxt(
-            os.path.join(task_path, 'all_res_%s.txt' % file_name))
+        all_res[dn] = pd.read_csv(
+            os.path.join(task_path, 'all_res_%s.csv' % file_name), index_col=0)
+        all_res[dn] = all_res[dn].values
 
     # ----- 对原始数据和去除批次后的数据关于批次的分类交叉验证 -----
     print('关于batch label的10-cv评价')
@@ -95,22 +97,46 @@ def main():
 
     # ----- 使用轮廓系数来进行评价
     pca = PCA(3)
-    sil_score_ori = silhouette_score(
-        pca.fit_transform(all_res['original_x']), all_res['ys'][:, 1])
-    sil_score_nobe = silhouette_score(
-        pca.fit_transform(all_res['recons_no_batch']), all_res['ys'][:, 1])
-    json_res['sil_score'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
-    print('轮廓系数评价')
+    ori_res_pca = pca.fit_transform(all_res['original_x'])
+    nobe_res_pca = pca.fit_transform(all_res['recons_no_batch'])
+
+    sil_score_ori = silhouette_score(ori_res_pca, all_res['ys'][:, 1])
+    sil_score_nobe = silhouette_score(nobe_res_pca, all_res['ys'][:, 1])
+    json_res['sil_score_all'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
+    print('所有样本轮廓系数评价')
     print('Original:')
     print(sil_score_ori)
     print('No Batch Effect:')
     print(sil_score_nobe)
+
+    subject_index = all_res['ys'][:, -1] == 1
+    sil_score_ori = silhouette_score(
+        ori_res_pca[subject_index], all_res['ys'][subject_index, 1])
+    sil_score_nobe = silhouette_score(
+        nobe_res_pca[subject_index], all_res['ys'][subject_index, 1])
+    json_res['sil_score_sub'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
+    print('subject样本轮廓系数评价')
+    print('Original:')
+    print(sil_score_ori)
+    print('No Batch Effect:')
+    print(sil_score_nobe)
+
+    sil_score_ori = silhouette_score(
+        ori_res_pca[~subject_index], all_res['ys'][~subject_index, 1])
+    sil_score_nobe = silhouette_score(
+        nobe_res_pca[~subject_index], all_res['ys'][~subject_index, 1])
+    json_res['sil_score_qc'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
+    print('qc样本轮廓系数评价')
+    print('Original:')
+    print(sil_score_ori)
+    print('No Batch Effect:')
+    print(sil_score_nobe)
+
     print('')
 
 
     # ----- 对原始数据和去除批次后的数据关于label的分类交叉验证 -----
     # 使用的是subject的数据
-    subject_index = all_res['ys'][:, -1] == 1
     subject_res = {k: v[subject_index, :] for k, v in all_res.items()}
     print('使用全部数据进行cancer vs no cancer的10-CV评价')
     cv_res_ori_label = cross_val_score(

@@ -14,7 +14,7 @@ import matplotlib; matplotlib.use('Pdf')
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from datasets import get_metabolic_data, get_demo_data
+from datasets import get_metabolic_data, get_demo_data, ConcatData
 from networks import SimpleCoder, SmoothCERankLoss
 from transfer import Normalization
 import metrics as mm
@@ -28,7 +28,8 @@ class BatchEffectTrainer:
         lrs=0.01, bs=64, nw=6, epoch=100, device=torch.device('cuda:0'),
         l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
         ae_disc_weight=(1.0, 1.0), supervise='both', label_smooth=0.2,
-        train_with_qc=False, spectral_norm=False
+        train_with_qc=False, spectral_norm=False, schedual_stones=[2000],
+        interconnect=False
     ):
         '''
         in_features: the number of input features;
@@ -53,6 +54,9 @@ class BatchEffectTrainer:
         train_with_qc: if true, the dataset of training is concatenated data of
             subject and qc;
         spectral_norm: if true, use spectral normalization for all linear layers;
+        schedual_stones: the epoch of lrs multiply 0.1;
+        interconnect: if true, the connection of hiddens between encoder and
+            decoder will be build;
         '''
 
         # 得到两个loss
@@ -88,9 +92,11 @@ class BatchEffectTrainer:
             ).to(device),
             'discriminator': SimpleCoder(
                 [no_be_num, 300, 300, logit_dim], lrelu=False,
-                norm=nn.BatchNorm1d, last_act=None, spectral_norm=spectral_norm
+                norm=nn.BatchNorm1d, last_act=None,
+                spectral_norm=spectral_norm, return_hidden=False
             ).to(device)
         }
+        self.num_encoder_layers = len(self.models['encoder'].layers)
 
         # 得到两个optim
         if not isinstance(lrs, (tuple, list)):
@@ -110,18 +116,19 @@ class BatchEffectTrainer:
         }
         self.scheduals = {
             'discriminate': optim.lr_scheduler.MultiStepLR(
-                self.optimizers['discriminate'], [2000], gamma=0.1
+                self.optimizers['discriminate'], schedual_stones, gamma=0.1
             ),
             'autoencode': optim.lr_scheduler.MultiStepLR(
-                self.optimizers['autoencode'], [2000], gamma=0.1
+                self.optimizers['autoencode'], schedual_stones, gamma=0.1
             )
         }
 
         # 初始化结果记录
-        self.history = {
-            'reconstruction_loss': [], 'discriminate_loss_train': [],
-            'discriminate_loss_fixed': []
-        }
+        self.history = {('recon%d_loss' % i): []
+                        for i in range(self.num_encoder_layers)}
+        self.history.update({
+            'discriminate_loss_train': [], 'discriminate_loss_fixed': []
+        })
 
         # 属性化
         self.epoch = epoch
@@ -135,6 +142,7 @@ class BatchEffectTrainer:
         self.no_be_num = no_be_num
         self.supervise = supervise
         self.train_with_qc = train_with_qc
+        self.interconnect = interconnect
 
         # 可视化工具
         self.visobj = VisObj()
@@ -154,13 +162,14 @@ class BatchEffectTrainer:
         }
 
         # 开始进行多个epoch训练
-        for e in tqdm(range(self.epoch), 'Epoch: '):
+        for _ in tqdm(range(self.epoch), 'Epoch: '):
             ## train phase
             # reset = True  # 用于visdom的方法，绘制batch的loss曲线，指示是否是append的
             # 实例化3个loss对象，用于计算epoch loss
             ad_loss_train_obj = mm.Loss()
             ad_loss_fixed_obj = mm.Loss()
-            recon_loss_obj = mm.Loss()
+            recon_loss_objs = [mm.Loss() for _ in
+                               range(self.num_encoder_layers)]
             # 训练时需要将模型更改至训练状态
             for model in self.models.values():
                 model.train()
@@ -174,12 +183,13 @@ class BatchEffectTrainer:
                     ad_loss_train = self._forward_discriminate(
                         batch_x, batch_y)
                 for _ in range(self.autoencode_train_num):
-                    recon_loss, ad_loss_fixed = self._forward_autoencode(
+                    recon_losses, ad_loss_fixed = self._forward_autoencode(
                         batch_x, batch_y)
                 # 记录loss(这样，就算update了多次loss，也只记录最后一次)
                 ad_loss_train_obj.add(ad_loss_train, batch_x.size(0))
                 ad_loss_fixed_obj.add(ad_loss_fixed, batch_x.size(0))
-                recon_loss_obj.add(recon_loss, batch_x.size(0))
+                for rl_loss, rl in zip(recon_loss_objs, recon_losses):
+                    rl_loss.add(rl, batch_x.size(0))
             # 看warning说需要把scheduler的step放在optimizer.step之后使用
             for sche in self.scheduals.values():
                 sche.step()
@@ -189,7 +199,9 @@ class BatchEffectTrainer:
                 ad_loss_train_obj.value())
             self.history['discriminate_loss_fixed'].append(
                 ad_loss_fixed_obj.value())
-            self.history['reconstruction_loss'].append(recon_loss_obj.value())
+            for i in range(self.num_encoder_layers):
+                self.history['recon%d_loss' % i].append(
+                    recon_loss_objs[i].value())
             # 可视化epoch loss
             # 因为两组loss的取值范围相差太大，所以分开来显示
             self.visobj.add_epoch_loss(
@@ -197,15 +209,14 @@ class BatchEffectTrainer:
                 disc_train=self.history['discriminate_loss_train'][-1],
                 disc_fixed=self.history['discriminate_loss_fixed'][-1],
             )
-            self.visobj.add_epoch_loss(
-                winname='recon_losses',
-                recon=self.history['reconstruction_loss'][-1],
-            )
+            recon_kwargs = {k: v[-1] for k, v in self.history.items()
+                            if k.startswith('recon')}
+            self.visobj.add_epoch_loss(winname='recon_losses', **recon_kwargs)
 
             ## valid phase
 
             # 使用当前训练的模型去得到去批次结果
-            all_data = data.ConcatDataset([datas['subject'], datas['qc']])
+            all_data = ConcatData(datas['subject'], datas['qc'])
             all_reses_dict = generate(
                 self.models, all_data, no_be_num=self.no_be_num,
                 device=self.device, bs=self.bs, nw=self.nw
@@ -223,14 +234,37 @@ class BatchEffectTrainer:
     def _forward_autoencode(self, batch_x, batch_y):
         ''' autoencode进行训练的部分 '''
         with torch.enable_grad():
-            hidden = self.models['encoder'](batch_x)
-            batch_x_recon = self.models['decoder'](hidden)
+            # encoder
+            encoder_hiddens = self.models['encoder'](batch_x)
+            hidden = encoder_hiddens[-1]
+            # decoder
+            if self.train_with_qc:
+                hidden_mask = torch.ones_like(hidden)
+                hidden_mask[batch_y[:, 3] == 0, :self.no_be_num] = 0
+                decoder_hiddens = self.models['decoder'](hidden)
+            else:
+                decoder_hiddens = self.models['decoder'](hidden)
+            batch_x_recon = decoder_hiddens[-1]
+            # discriminator, but not training
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
-            reconstruction_loss = self.criterions['reconstruction'](
-                batch_x_recon, batch_x)
+            # reconstruction losses
+            recon_losses = [
+                self.criterions['reconstruction'](batch_x_recon, batch_x)]
+            for i in range(len(encoder_hiddens)-1):
+                recon_loss1 = self.criterions['reconstruction'](
+                    encoder_hiddens[i], decoder_hiddens[-i-2])
+                recon_losses.append(recon_loss1)
+            # discriminator loss
             adversarial_loss = self.criterions['adversarial'](logit, batch_y)
+            # 组合这些loss来得到最终计算梯度使用的loss
             # 分类做的不好，说明这些维度中没有批次的信息，批次的信息都在后面的维度中
-            all_loss = self.ae_weight * reconstruction_loss - \
+            recon_loss = 0.
+            if self.interconnect:
+                for rl in recon_losses:
+                    recon_loss += rl
+            else:
+                recon_loss = recon_losses[0]
+            all_loss = self.ae_weight * recon_loss - \
                 self.disc_weight * adversarial_loss
         all_loss.backward()
         if self.clip_grad:
@@ -241,12 +275,12 @@ class BatchEffectTrainer:
                 ), max_norm=1
             )
         self.optimizers['autoencode'].step()
-        return reconstruction_loss, adversarial_loss
+        return recon_losses, adversarial_loss
 
     def _forward_discriminate(self, batch_x, batch_y):
         ''' discriminator进行训练的部分 '''
         with torch.no_grad():
-            hidden = self.models['encoder'](batch_x)
+            hidden = self.models['encoder'](batch_x)[-1]
         with torch.enable_grad():
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             adversarial_loss = self.criterions['adversarial'](logit, batch_y)
@@ -302,7 +336,9 @@ def main():
         supervise=config.args.supervise,
         label_smooth=config.args.label_smooth,
         train_with_qc=config.args.train_data == 'all',
-        spectral_norm=config.args.spectral_norm
+        spectral_norm=config.args.spectral_norm,
+        schedual_stones=config.args.schedual_stones,
+        interconnect=config.args.interconnect
     )
 
     best_models, hist = trainer.fit(datas)

@@ -53,17 +53,18 @@ def pca_for_dict(all_dict, ori=True, n_components=2, sub_qc_split=True):
     控制是返回整个数据集，还是将subject和qc分开返回。
     注意，没有被pca处理的all_dict中的部分，会原样返回。
     '''
-    pca_dict = copy.deepcopy(all_dict)
+    # 因为generate的结果改成了dict of dfs
+    pca_dict = {k: v.values for k, v in all_dict.items()}
     pca = PCA(n_components)
     if ori:
         # pca for original_x
-        pca_dict['original_x'] = pca.fit_transform(all_dict['original_x'])
+        pca_dict['original_x'] = pca.fit_transform(pca_dict['original_x'])
     # get reconstructed datas
     pca_dict['recons_no_batch'] = pca.fit_transform(
-        all_dict['recons_no_batch'])
-    pca_dict['recons_all'] = pca.fit_transform(all_dict['recons_all'])
+        pca_dict['recons_no_batch'])
+    pca_dict['recons_all'] = pca.fit_transform(pca_dict['recons_all'])
     if sub_qc_split:
-        qc_index = all_dict['ys'][:, -1] == 0
+        qc_index = pca_dict['ys'][:, -1] == 0
         sub_pca_dict = {k: v[~qc_index, :] for k, v in pca_dict.items()}
         qc_pca_dict = {k: v[qc_index, :] for k, v in pca_dict.items()}
         return sub_pca_dict, qc_pca_dict

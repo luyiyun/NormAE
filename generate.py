@@ -2,13 +2,14 @@ import os
 import json
 
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 import torch
 import torch.utils.data as data
 from sklearn.decomposition import FastICA
 from sklearn.feature_selection import f_classif
 
-from datasets import get_demo_data, get_metabolic_data
+from datasets import get_demo_data, get_metabolic_data, ConcatData
 from transfer import Normalization
 
 
@@ -17,13 +18,11 @@ def generate(
     device=torch.device('cuda:0')
 ):
     '''
-    data_loaders: Dataset对象或Dataloader对象，如果是Dataset则会利用实例化
-        时的num_workers和batch_size来将其转换成一个Dataloader对象，可以输入
-        多个；
+    data_loader: Dataset对象或Dataloader对象
 
     return：
         It's generator，the element is dict，the keys are "recons_no_batch、
-        recons_all、original_x、ys”, the values are ndarrays
+        recons_all、original_x、ys”, the values ar edataframe
     '''
     for m in models.values():
         m.eval()
@@ -37,11 +36,11 @@ def generate(
             x_ori.append(batch_x)
             ys.append(batch_y)
             batch_x = batch_x.to(device, torch.float)
-            hidden = models['encoder'](batch_x)
+            hidden = models['encoder'](batch_x)[-1]
             codes.append(hidden.clone().detach())
-            x_recon_be.append(models['decoder'](hidden))
+            x_recon_be.append(models['decoder'](hidden)[-1])
             hidden[:, no_be_num:] = 0
-            batch_x_recon = models['decoder'](hidden)
+            batch_x_recon = models['decoder'](hidden)[-1]
             x_recon.append(batch_x_recon)
     res = {
         'recons_no_batch': torch.cat(x_recon),
@@ -51,7 +50,24 @@ def generate(
     }
     for k, v in res.items():
         if v is not None:
-            res[k] = v.detach().cpu().numpy()
+            if k == 'ys':
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.Y_df.index,
+                    columns=data_loader.dataset.Y_df.columns
+                )
+            elif k != 'codes':
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.X_df.index,
+                    columns=data_loader.dataset.X_df.columns
+                )
+            else:
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.X_df.index,
+                )
+
     return res
 
 
@@ -61,15 +77,13 @@ def generate_ica(
     device=torch.device('cuda:0'),
 ):
     '''
-    data_loaders: Dataset对象或Dataloader对象，如果是Dataset则会利用实例化
-        时的num_workers和batch_size来将其转换成一个Dataloader对象，可以输入
-        多个；
+    data_loaders: Dataset对象或Dataloader对象
     no_be_num: 如果None，则表示对所有codes进行ICA，如果不是None，则其表示的前
         几个维度的codes是非批次效应编码，只会对其之后的编码进行ICA;
 
     return：
         It's generator，the element is dict，the keys are "recons_no_batch、
-        recons_all、original_x、ys”, the values are ndarrays
+        recons_all、original_x、ys”, the values aredataframe.
     '''
     for m in models.values():
         m.eval()
@@ -84,26 +98,42 @@ def generate_ica(
             x_ori.append(batch_x)
             ys.append(batch_y)
             batch_x = batch_x.to(device, torch.float)
-            hidden = models['encoder'](batch_x)
+            hidden = models['encoder'](batch_x)[-1]
             codes.append(hidden)
-            x_recon_be.append(models['decoder'](hidden))
+            x_recon_be.append(models['decoder'](hidden)[-1])
     res = {
         'original_x': torch.cat(x_ori), 'ys': torch.cat(ys),
         'codes':torch.cat(codes), 'recons_all': torch.cat(x_recon_be),
     }
     for k, v in res.items():
         if v is not None:
-            res[k] = v.detach().cpu().numpy()
+            if k == 'ys':
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.Y_df.index,
+                    columns=data_loader.dataset.Y_df.columns
+                )
+            elif k != 'codes':
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.X_df.index,
+                    columns=data_loader.dataset.X_df.columns
+                )
+            else:
+                res[k] = pd.DataFrame(
+                    v.detach().cpu().numpy(),
+                    index=data_loader.dataset.X_df.index,
+                )
     # 进行ICA
     print('FastICA beginning!!')
     if no_be_num is None:
-        ica_use_data = res['codes']
+        ica_use_data = res['codes'].values
     else:
-        ica_use_data = res['codes'][:, no_be_num:]
+        ica_use_data = res['codes'].values[:, no_be_num:]
     ica_estimator = FastICA()
     transfered_data = ica_estimator.fit_transform(ica_use_data)
     # 使用标签对ICA分解后的数据进行筛选，选择没有意义的成分
-    _, pvals = f_classif(transfered_data, res['ys'][:, 1])
+    _, pvals = f_classif(transfered_data, res['ys'].values[:, 1])
     mask_sig = pvals < 0.05
     print('total %d codes, significated %d, their indices are:'
           % (len(mask_sig), mask_sig.sum()))
@@ -113,7 +143,7 @@ def generate_ica(
     filtered_data = ica_estimator.inverse_transform(transfered_data)
     if no_be_num is not None:
         filtered_data = np.concatenate(
-            [res['codes'][:, :no_be_num], filtered_data], axis=1
+            [res['codes'].values[:, :no_be_num], filtered_data], axis=1
         )
     filtered_data = data.TensorDataset(torch.tensor(filtered_data))
     filtered_data = data.DataLoader(
@@ -122,9 +152,13 @@ def generate_ica(
     with torch.no_grad():
         for hidden, in tqdm(filtered_data, 'decode: '):
             hidden = hidden.to(device, torch.float)
-            batch_x_recon = models['decoder'](hidden)
+            batch_x_recon = models['decoder'](hidden)[-1]
             x_recon.append(batch_x_recon)
-    res['recons_no_batch'] = torch.cat(x_recon).detach().cpu().numpy()
+    res['recons_no_batch'] = pd.DataFrame(
+        torch.cat(x_recon).detach().cpu().numpy(),
+        index=data_loader.dataset.X_df.index,
+        columns=data_loader.dataset.X_df.columns
+    )
     return res
 
 
@@ -164,20 +198,20 @@ def main():
     # ----- 得到生成的数据 -----
     print('不使用ICA')
     all_res = generate(
-        models, data.ConcatDataset([subject_dat, qc_dat]),
+        models, ConcatData(subject_dat, qc_dat),
         save_json['no_batch_num'], bs=save_json['batch_size'],
         nw=save_json['num_workers'], device=torch.device('cuda:0')
     )
     # ----- 保存 -----
     for k, v in all_res.items():
-        np.savetxt(os.path.join(task_path, 'all_res_%s.txt' % k), v)
+        v.to_csv(os.path.join(task_path, 'all_res_%s.csv' % k))
     print('')
 
 
     # ----- 得到生成的数据 -----
     print('使用ICA')
     all_res = generate_ica(
-        models, data.ConcatDataset([subject_dat, qc_dat]),
+        models, ConcatData(subject_dat, qc_dat),
         save_json['no_batch_num'], bs=save_json['batch_size'],
         nw=save_json['num_workers'], device=torch.device('cuda:0')
     )
@@ -186,8 +220,7 @@ def main():
     #   不进行保存了。
     for k, v in all_res.items():
         if k == 'recons_no_batch':
-            np.savetxt(
-                os.path.join(task_path, 'all_res_%s_ica.txt' % k), v)
+            v.to_csv(os.path.join(task_path, 'all_res_%s_ica.csv' % k))
     print('')
 
 

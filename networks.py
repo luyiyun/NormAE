@@ -96,41 +96,49 @@ class Coder(nn.Module):
 class SimpleCoder(nn.Module):
     def __init__(
         self, units, dropout=None, norm=None, lrelu=True, last_act=None,
-        spectral_norm=False
+        spectral_norm=False, return_hidden=True
     ):
         '''
         units是节点个数，其中第一个是输入维度，最后一个是输出维度
         '''
         super(SimpleCoder, self).__init__()
-        model = []
+        self.return_hidden = return_hidden
+        self.layers = nn.ModuleList()
         for i, (u1, u2) in enumerate(zip(units[:-1], units[1:])):
+            one_layer = []
             if spectral_norm:
-                model.append(nn.utils.spectral_norm(nn.Linear(u1, u2)))
+                one_layer.append(nn.utils.spectral_norm(nn.Linear(u1, u2)))
             else:
-                model.append(nn.Linear(u1, u2))
+                one_layer.append(nn.Linear(u1, u2))
             if i < (len(units) - 2):  # 因为units是包括了输入层的
-                model.append(nn.LeakyReLU() if lrelu else nn.ReLU())
+                one_layer.append(nn.LeakyReLU() if lrelu else nn.ReLU())
                 if norm is not None:
-                    model.append(norm(u2))
+                    one_layer.append(norm(u2))
                 # dropout可以是None(没有dropout)，也可以是float(除了最后一
                 # 层，其他层都加这个dropout)，也可以是list(表示第几层指定的
                 # dropout是多少，None表示这一层不加)
                 if isinstance(dropout, float):
-                    model.append(nn.Dropout(dropout))
+                    one_layer.append(nn.Dropout(dropout))
                 elif isinstance(dropout, (list, tuple)):
                     dropout_i = dropout[i]
-                    model.append(nn.Dropout(dropout_i))
+                    one_layer.append(nn.Dropout(dropout_i))
             else:
                 if last_act is not None:
-                    model.append(last_act)
+                    one_layer.append(last_act)
                 # 有可能dropout为list的时候还会指定最后一层加dropout
                 if isinstance(dropout, (list, tuple)):
-                    model.append(nn.Dropout(dropout[len(units)-2]))
-        self.model = nn.Sequential(*model)
-
+                    one_layer.append(nn.Dropout(dropout[len(units)-2]))
+            one_layer = nn.Sequential(*one_layer)
+            self.layers.append(one_layer)
 
     def forward(self, x):
-        return self.model(x)
+        layers_out = []
+        for layer in self.layers:
+            x = layer(x)
+            layers_out.append(x)
+        if self.return_hidden:
+            return layers_out
+        return layers_out[-1]
 
 
 ''' Loss '''

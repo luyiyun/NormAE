@@ -42,6 +42,13 @@ class BaseData(data.Dataset):
         return len(self.Y_df['batch'].unique())
 
 
+class ConcatData(BaseData):
+    def __init__(self, *datas):
+        X_df = pd.concat([d.X_df for d in datas], axis=0)
+        Y_df = pd.concat([d.Y_df for d in datas], axis=0)
+        super(ConcatData, self).__init__(X_df, Y_df, None)
+
+
 def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     '''
     x_file：储存代谢物丰度值信息的文件路径；
