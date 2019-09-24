@@ -312,14 +312,15 @@ def main():
 
     # ----- 读取数据 -----
     pre_transfer = Normalization(config.args.data_norm)
-    if config.args.task == 'metabolic':
-        subject_dat, qc_dat = get_metabolic_data(
-            config.metabolic_x_file, config.metabolic_y_file,
-            pre_transfer=pre_transfer
-        )
-    elif config.args.task == 'demo':
+    if config.args.task == 'demo':
         subject_dat, qc_dat = get_demo_data(
             config.demo_sub_file, config.demo_qc_file, pre_transfer
+        )
+    else:
+        subject_dat, qc_dat = get_metabolic_data(
+            config.metabolic_x_files[config.args.task],
+            config.metabolic_y_files[config.args.task],
+            pre_transfer=pre_transfer
         )
     datas = {'subject': subject_dat, 'qc': qc_dat}
 

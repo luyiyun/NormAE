@@ -9,8 +9,14 @@ import torch.optim as optim
 
 class Config:
 
-    metabolic_y_file = "./DATA/metabolic/sample.information.T3.csv"
-    metabolic_x_file = "./DATA/metabolic/data_T3原始数据.csv"
+    metabolic_y_files = {
+        i: os.path.join('./DATA', i, 'sample.information.csv')
+        for i in ['Amide', 'T3']
+    }
+    metabolic_x_files = {
+        i: os.path.join('./DATA', i, 'meta.csv')
+        for i in ['Amide', 'T3']
+    }
     demo_sub_file = './DATA/Demo/sample.csv'
     demo_qc_file = './DATA/Demo/qc.csv'
 
@@ -21,8 +27,8 @@ class Config:
             help='保存的文件夹路径，如果有重名，会在其后加-来区别'
         )
         self.parser.add_argument(
-            '-t', '--task', default='metabolic',
-            help="使用哪个数据，默认是metabolic，还可以是demo"
+            '-t', '--task', default='T3',
+            help="使用哪个数据，默认是T3，还可以是demo, Amide"
         )
         self.parser.add_argument(
             '-td', '--train_data', default='subject',
