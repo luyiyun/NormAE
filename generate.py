@@ -292,7 +292,7 @@ def main():
         subject_dat, qc_dat = get_demo_data(
             Config.demo_sub_file, Config.demo_qc_file, pre_transfer
         )
-    elif :
+    else:
         subject_dat, qc_dat = get_metabolic_data(
             Config.metabolic_x_files[save_json['task']],
             Config.metabolic_y_files[save_json['task']],
