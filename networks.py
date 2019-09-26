@@ -150,22 +150,36 @@ class CEwithLabelSmooth(nn.Module):
     样本，如果其标签是0, 则标签使用(1-lambda, lambda, lambda, lambda)，其中
     lambda是从uniform(o, smoothing)中采样得到
     '''
-    def __init__(self, smoothing=0.0):
+    def __init__(self, smoothing=0.0, leastsquare=False):
         super(CEwithLabelSmooth, self).__init__()
         self.smoothing = smoothing
+        self.leastsquare = leastsquare
         self.log_softmax = nn.LogSoftmax(dim=1)
-        if smoothing == 0.0:
+        if leastsquare:
+            # 如果使用mse，则不管是不是用label smoothing，都是使用同一个方法
+            self.criterion = nn.MSELoss()
+        elif smoothing == 0.0:
+            # 如果不使用mse，则不使用标签平滑是CE，使用标签平滑是KLD
             self.criterion = nn.CrossEntropyLoss()
         else:
             self.criterion = nn.KLDivLoss(reduction='batchmean')
 
     def forward(self, pred, target):
         ''' 注意，这里的pred是预测的分类部分 '''
+
+        # 使用mse时，不论是否使用标签平滑，都需要使用long格式的标签来进行
+        #   one-hot转变或加噪声
+        # 而对于ce，则也都需要long格式的标签来直接输入或者加噪声
         use_target = target[:, 1].long()
-        if self.smoothing == 0.0:
+        size = pred.size(1)
+
+        if self.smoothing == 0.0 and not self.leastsquare:
             return self.criterion(pred, use_target)
+        elif self.smoothing == 0.0:
+            identity = torch.eye(size)
+            one_hot_label = identity[use_target].to(pred)
+            return self.criterion(pred, one_hot_label)
         else:
-            size = pred.size(1)
             pseudo_identity = torch.empty((size, size))
             pseudo_identity.uniform_(0, self.smoothing)
             pseudo_identity = torch.eye(size) - pseudo_identity
@@ -220,13 +234,16 @@ class RankLoss(nn.Module):
 
 
 class SmoothCERankLoss(nn.Module):
-    def __init__(self, smoothing=0.2, reduction='mean', ce_w=1.0, rank_w=1.0):
+    def __init__(
+        self, smoothing=0.2, leastsquare=False, reduction='mean',
+        ce_w=1.0, rank_w=1.0
+    ):
         ''' 如果ce_w=0.0默认pred中没有分类的部分，rank也是一样 '''
         assert ce_w > 0.0 or rank_w > 0.0
         super(SmoothCERankLoss, self).__init__()
         self.ce_w, self.rank_w = ce_w, rank_w
         if ce_w > 0.:
-            self.ce = CEwithLabelSmooth(smoothing)
+            self.ce = CEwithLabelSmooth(smoothing, leastsquare=leastsquare)
         if rank_w > 0.:
             self.rank = RankLoss(reduction)
 

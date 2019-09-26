@@ -29,7 +29,7 @@ class BatchEffectTrainer:
         l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
         ae_disc_weight=(1.0, 1.0), supervise='both', label_smooth=0.2,
         train_with_qc=False, spectral_norm=False, schedual_stones=[2000],
-        interconnect=False
+        interconnect=False, leastsquare=False
     ):
         '''
         in_features: the number of input features;
@@ -57,6 +57,7 @@ class BatchEffectTrainer:
         schedual_stones: the epoch of lrs multiply 0.1;
         interconnect: if true, the connection of hiddens between encoder and
             decoder will be build;
+        leastsquare: if ture, use mse rather than ce;
         '''
 
         # 得到两个loss
@@ -64,14 +65,16 @@ class BatchEffectTrainer:
         # according to supervise, choose classification criterion
         if supervise == 'both':
             logit_dim = batch_label_num + 1
-            self.criterions['adversarial'] = SmoothCERankLoss(label_smooth)
+            self.criterions['adversarial'] = SmoothCERankLoss(
+                label_smooth, leastsquare=leastsquare)
         elif supervise == 'rank':
             logit_dim = 1
-            self.criterions['adversarial'] = SmoothCERankLoss(ce_w=0.0)
+            self.criterions['adversarial'] = SmoothCERankLoss(
+                ce_w=0.0, leastsquare=leastsquare)
         elif supervise == 'cls':
             logit_dim = batch_label_num
             self.criterions['adversarial'] = SmoothCERankLoss(
-                label_smooth, rank_w=0.0)
+                label_smooth, leastsquare=leastsquare, rank_w=0.0)
         else:
             raise ValueError(
                 "supervise must be one of 'both', 'rank' and 'cls'")
@@ -339,7 +342,8 @@ def main():
         train_with_qc=config.args.train_data == 'all',
         spectral_norm=config.args.spectral_norm,
         schedual_stones=config.args.schedual_stones,
-        interconnect=config.args.interconnect
+        interconnect=config.args.interconnect,
+        leastsquare=config.args.leastsquare
     )
 
     best_models, hist = trainer.fit(datas)

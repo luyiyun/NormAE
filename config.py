@@ -103,6 +103,10 @@ class Config:
             help=("if use, the connect of hiddens between encoder and "
                   "decoder will be build")
         )
+        self.parser.add_argument(
+            '--leastsquare', action='store_true',
+            help="if use, mse rather than ce."
+        )
         self.args = self.parser.parse_args()
 
     def save(self, fname):
