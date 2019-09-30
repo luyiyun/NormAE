@@ -134,6 +134,20 @@ def main():
 
     print('')
 
+    # ----- 计算QC样本间的相关系数均值 -----
+    print('QC数据计算平均的相关系数')
+    ori_cormat = np.corrcoef(all_res['original_x'][~subject_index])
+    ori_cormat_mean = ori_cormat[np.triu_indices_from(ori_cormat, k=1)].mean()
+    nobe_cormat = np.corrcoef(all_res['recons_no_batch'][~subject_index])
+    nobe_cormat_mean = nobe_cormat[
+        np.triu_indices_from(nobe_cormat, k=1)].mean()
+    print('qc样本mean of cor')
+    print('Original:')
+    print(ori_cormat_mean)
+    print('No Batch Effect:')
+    print(nobe_cormat_mean)
+
+    print('')
 
     # ----- 对原始数据和去除批次后的数据关于label的分类交叉验证 -----
     # 使用的是subject的数据
@@ -183,6 +197,7 @@ def main():
     print(cv_res_nobe_label)
     print(np.mean(cv_res_nobe_label))
     print('')
+
 
 
     # 保存结果的dict以json的格式保存

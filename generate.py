@@ -311,6 +311,8 @@ def main():
             nw=save_json['num_workers'], device=torch.device('cuda:0')
         )
         for k, v in all_res.items():
+            if k not in ['ys', 'codes']:
+                v, _ = pre_transfer.inverse_transform(v, None)
             v.to_csv(os.path.join(task_path, 'AE_%s.csv' % k))
         print('')
     else:
@@ -323,6 +325,8 @@ def main():
         )
         # ----- 保存 -----
         for k, v in all_res.items():
+            if k not in ['ys', 'codes']:
+                v, _ = pre_transfer.inverse_transform(v, None)
             v.to_csv(os.path.join(task_path, 'all_res_%s.csv' % k))
         print('')
 
@@ -339,6 +343,7 @@ def main():
         #   不进行保存了。
         for k, v in all_res.items():
             if k == 'recons_no_batch':
+                v, _ = pre_transfer.inverse_transform(v, None)
                 v.to_csv(os.path.join(task_path, 'all_res_%s_ica.csv' % k))
         print('')
 

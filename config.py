@@ -36,8 +36,12 @@ class Config:
                   "即使用所有数据来train")
         )
         self.parser.add_argument(
-            '-dn', '--data_norm', default='standard',
-            help="数据正则化方式，默认是standard scale"
+            '-dn', '--data_norm', default='none',
+            help="数据正则化方式，默认是none,还可以是standard"
+        )
+        self.parser.add_argument(
+            '--data_norm_dim', default='rows',
+            help="数据标准化的方向，默认是rows, columns"
         )
         self.parser.add_argument(
             '-bs', '--batch_size', default=64, type=int,

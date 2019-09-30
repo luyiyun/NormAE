@@ -180,6 +180,8 @@ class BatchEffectTrainer:
             for batch_x, batch_y in tqdm(dataloaders['train'], 'Train Batch: '):
                 batch_x = batch_x.to(self.device, torch.float)
                 batch_y = batch_y.to(self.device, torch.float)
+                if self.supervise == 'rank':
+                    batch_y[:, 1] = -1
                 for optimizer in self.optimizers.values():
                     optimizer.zero_grad()
                 for _ in range(self.discriminate_train_num):
@@ -314,7 +316,11 @@ def main():
     config.show()
 
     # ----- 读取数据 -----
-    pre_transfer = Normalization(config.args.data_norm)
+    if config.args.data_norm != "none":
+        pre_transfer = Normalization(config.args.data_norm,
+                                     dim=config.args.data_norm_dim)
+    else:
+        pre_transfer = None
     if config.args.task == 'demo':
         subject_dat, qc_dat = get_demo_data(
             config.demo_sub_file, config.demo_qc_file, pre_transfer
