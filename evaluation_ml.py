@@ -164,7 +164,7 @@ def main():
         estimator, subject_res['recons_no_batch'], subject_res['ys'][:, 2],
         cv=kfold, scoring='roc_auc', n_jobs=12)
     json_res['true_label_cv'] = {
-        'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
+        'ori': cv_res_ori_label.tolist(), 'nobe': cv_res_nobe_label.tolist()}
     print('Original:')
     print(cv_res_ori_label)
     print(np.mean(cv_res_ori_label))
@@ -193,7 +193,7 @@ def main():
         estimators, X, Y, cv=kfold, scoring='roc_auc')
 
     json_res['true_label_cv_feature_selection'] = {
-        'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
+        'ori': cv_res_ori_label.tolist(), 'nobe': cv_res_nobe_label.tolist()}
     print('Original:')
     print(cv_res_ori_label)
     print(np.mean(cv_res_ori_label))
