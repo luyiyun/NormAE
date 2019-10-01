@@ -287,7 +287,7 @@ def main():
     print(save_json)
 
     # ----- 读取数据 -----
-    pre_transfer = Normalization(save_json['data_norm'])
+    pre_transfer = Normalization(save_json['data_normalization'])
     if save_json['task'] == 'demo':
         subject_dat, qc_dat = get_demo_data(
             Config.demo_sub_file, Config.demo_qc_file, pre_transfer

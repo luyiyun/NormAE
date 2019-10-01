@@ -10,12 +10,11 @@ import torch.optim as optim
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import matplotlib; matplotlib.use('Pdf')
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, SmoothCERankLoss
+from networks import SimpleCoder, ClsOrderLoss
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -27,9 +26,10 @@ class BatchEffectTrainer:
         self, in_features, bottle_num, no_be_num, batch_label_num=None,
         lrs=0.01, bs=64, nw=6, epoch=100, device=torch.device('cuda:0'),
         l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
-        ae_disc_weight=(1.0, 1.0), supervise='both', label_smooth=0.2,
-        train_with_qc=False, spectral_norm=False, schedual_stones=[2000],
-        interconnect=False, leastsquare=False
+        ae_disc_weight=(1.0, 1.0), label_smooth=0.2,
+        train_with_qc=False, spectral_norm=False, schedual_stones=[3000],
+        cls_leastsquare=False, order_leastsquare=False,
+        cls_order_weight=(1.0, 1.0), use_batch_for_order=True
     ):
         '''
         in_features: the number of input features;
@@ -49,37 +49,35 @@ class BatchEffectTrainer:
             discriminator;
         ae_disc_weight: for reconstruction loss, the weights of reconstruction
             loss and discriminated loss;
-        supervise: the type of discriminate;
         label_smooth: the label smooth parameter for disciminate;
         train_with_qc: if true, the dataset of training is concatenated data of
             subject and qc;
         spectral_norm: if true, use spectral normalization for all linear layers;
         schedual_stones: the epoch of lrs multiply 0.1;
-        interconnect: if true, the connection of hiddens between encoder and
-            decoder will be build;
-        leastsquare: if ture, use mse rather than ce;
+        cls_leastsquare: if ture, use mse in ClswithLabelSmoothLoss;
+        order_leastsquare: if ture, use mse in OrderLoss;
+        cls_order_weight: weights for cls and order in ClsOrderLoss;
+        use_batch_for_order: if use, compute rank loss with batch;
         '''
 
         # 得到两个loss
-        self.criterions = {'reconstruction': nn.MSELoss()}
-        # according to supervise, choose classification criterion
-        if supervise == 'both':
+        self.cls_weight, self.order_weight = cls_order_weight
+        self.criterions = {
+            'reconstruction': nn.MSELoss(),
+            'adversarial': ClsOrderLoss(
+                self.cls_weight, self.order_weight, cls_leastsquare,
+                order_leastsquare, label_smooth)
+        }
+        # according to cls_order_weight, choose classification criterion
+        if self.cls_weight > 0.0 and self.order_weight > 0.0:
             logit_dim = batch_label_num + 1
-            self.criterions['adversarial'] = SmoothCERankLoss(
-                label_smooth, leastsquare=leastsquare)
-        elif supervise == 'rank':
-            logit_dim = 1
-            self.criterions['adversarial'] = SmoothCERankLoss(
-                ce_w=0.0, leastsquare=leastsquare)
-        elif supervise == 'cls':
+        elif self.cls_weight > 0.0:
             logit_dim = batch_label_num
-            self.criterions['adversarial'] = SmoothCERankLoss(
-                label_smooth, leastsquare=leastsquare, rank_w=0.0)
+        elif self.order_weight:
+            logit_dim = 1
         else:
             raise ValueError(
-                "supervise must be one of 'both', 'rank' and 'cls'")
-        self.supervise = supervise
-
+                'cls_weight and order_weight must not be all zero')
 
         # 得到3个模型
         self.models = {
@@ -143,9 +141,8 @@ class BatchEffectTrainer:
         self.bs = bs
         self.nw = nw
         self.no_be_num = no_be_num
-        self.supervise = supervise
         self.train_with_qc = train_with_qc
-        self.interconnect = interconnect
+        self.use_batch_for_order = use_batch_for_order
 
         # 可视化工具
         self.visobj = VisObj()
@@ -167,7 +164,6 @@ class BatchEffectTrainer:
         # 开始进行多个epoch训练
         for _ in tqdm(range(self.epoch), 'Epoch: '):
             ## train phase
-            # reset = True  # 用于visdom的方法，绘制batch的loss曲线，指示是否是append的
             # 实例化3个loss对象，用于计算epoch loss
             ad_loss_train_obj = mm.Loss()
             ad_loss_fixed_obj = mm.Loss()
@@ -178,10 +174,8 @@ class BatchEffectTrainer:
                 model.train()
             # 循环每个batch进行训练
             for batch_x, batch_y in tqdm(dataloaders['train'], 'Train Batch: '):
-                batch_x = batch_x.to(self.device, torch.float)
-                batch_y = batch_y.to(self.device, torch.float)
-                if self.supervise == 'rank':
-                    batch_y[:, 1] = -1
+                batch_x = batch_x.to(self.device).float()
+                batch_y = batch_y.to(self.device).float()
                 for optimizer in self.optimizers.values():
                     optimizer.zero_grad()
                 for _ in range(self.discriminate_train_num):
@@ -260,15 +254,19 @@ class BatchEffectTrainer:
                     encoder_hiddens[i], decoder_hiddens[-i-2])
                 recon_losses.append(recon_loss1)
             # discriminator loss
-            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
+            ad_loss_args = [None] * 5
+            if self.cls_weight > 0.0:
+                ad_loss_args[0] = logit[:, 1:]
+                ad_loss_args[1] = batch_y[:, 1]
+            if self.order_weight > 0.0:
+                ad_loss_args[2] = logit[:, 0]
+                ad_loss_args[3] = batch_y[:, 0]
+            if self.use_batch_for_order:
+                ad_loss_args[4] = batch_y[:, 1]
+            adversarial_loss = self.criterions['adversarial'](*ad_loss_args)
             # 组合这些loss来得到最终计算梯度使用的loss
             # 分类做的不好，说明这些维度中没有批次的信息，批次的信息都在后面的维度中
-            recon_loss = 0.
-            if self.interconnect:
-                for rl in recon_losses:
-                    recon_loss += rl
-            else:
-                recon_loss = recon_losses[0]
+            recon_loss = recon_losses[0]
             all_loss = self.ae_weight * recon_loss - \
                 self.disc_weight * adversarial_loss
         all_loss.backward()
@@ -288,7 +286,16 @@ class BatchEffectTrainer:
             hidden = self.models['encoder'](batch_x)[-1]
         with torch.enable_grad():
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
-            adversarial_loss = self.criterions['adversarial'](logit, batch_y)
+            ad_loss_args = [None] * 5
+            if self.cls_weight > 0.0:
+                ad_loss_args[0] = logit[:, 1:]
+                ad_loss_args[1] = batch_y[:, 1]
+            if self.order_weight > 0.0:
+                ad_loss_args[2] = logit[:, 0]
+                ad_loss_args[3] = batch_y[:, 0]
+            if self.use_batch_for_order:
+                ad_loss_args[4] = batch_y[:, 1]
+            adversarial_loss = self.criterions['adversarial'](*ad_loss_args)
         adversarial_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -316,11 +323,7 @@ def main():
     config.show()
 
     # ----- 读取数据 -----
-    if config.args.data_norm != "none":
-        pre_transfer = Normalization(config.args.data_norm,
-                                     dim=config.args.data_norm_dim)
-    else:
-        pre_transfer = None
+    pre_transfer = Normalization(config.args.data_normalization)
     if config.args.task == 'demo':
         subject_dat, qc_dat = get_demo_data(
             config.demo_sub_file, config.demo_qc_file, pre_transfer
@@ -337,26 +340,31 @@ def main():
     trainer = BatchEffectTrainer(
         subject_dat.num_features, config.args.bottle_num,
         config.args.no_batch_num, batch_label_num=subject_dat.num_batch_labels,
-        lrs=config.args.ae_disc_lr,
-        bs=config.args.batch_size, nw=config.args.num_workers,
-        epoch=config.args.epoch, device=torch.device('cuda:0'),
-        l2=config.args.l2, clip_grad=True,
+        lrs=config.args.ae_disc_lr, bs=config.args.batch_size,
+        nw=config.args.num_workers, epoch=config.args.epoch,
+        device=torch.device('cuda:0'), l2=config.args.l2, clip_grad=True,
         ae_disc_train_num=config.args.ae_disc_train_num,
         ae_disc_weight=config.args.ae_disc_weight,
-        supervise=config.args.supervise,
         label_smooth=config.args.label_smooth,
         train_with_qc=config.args.train_data == 'all',
         spectral_norm=config.args.spectral_norm,
         schedual_stones=config.args.schedual_stones,
-        interconnect=config.args.interconnect,
-        leastsquare=config.args.leastsquare
+        cls_leastsquare=config.args.cls_leastsquare,
+        order_leastsquare=config.args.order_leastsquare,
+        cls_order_weight=config.args.cls_order_weight,
+        use_batch_for_order=config.args.use_batch_for_order
     )
 
     best_models, hist = trainer.fit(datas)
     print('')
 
     # 保存结果
-    dirname = check_update_dirname(config.args.save)
+    if os.path.exists(config.args.save):
+        dirname = input("%s has been already exists, please input New: " %
+                        config.args.save)
+    else:
+        os.makedirs(config.args.save)
+        dirname = config.args.save
     torch.save(best_models, os.path.join(dirname, 'models.pth'))
     pd.DataFrame(hist).to_csv(os.path.join(dirname, 'train.csv'))
     config.save(os.path.join(dirname, 'config.json'))

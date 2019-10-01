@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import SelectFdr, SelectFromModel
@@ -54,6 +54,7 @@ def main():
     parser.add_argument(
         '--to', default='evaluation_ml_res',
         help='保存评价结果的json文件名，默认是evaluation_ml_res')
+    parser.add_argument('--rand_seed', default=1234, type=int)
     args = parser.parse_args()
     print(args)
     print('')
@@ -62,6 +63,7 @@ def main():
     json_res.update(deepcopy(args.__dict__))
 
     task_path = args.save
+    kfold = StratifiedKFold(10, random_state=args.rand_seed)
     # ----- 读取数据集 -----
     data_names = ['original_x', 'ys', 'recons_no_batch']
     all_res = {}
@@ -81,10 +83,10 @@ def main():
     estimator = RandomForestClassifier(n_estimators=100)
     cv_res_ori = cross_val_score(
         estimator, all_res['original_x'], all_res['ys'][:, 1],
-        cv=10, scoring='accuracy', n_jobs=12)
+        cv=kfold, scoring='accuracy', n_jobs=12)
     cv_res_nobe = cross_val_score(
         estimator, all_res['recons_no_batch'], all_res['ys'][:, 1],
-        cv=10, scoring='accuracy', n_jobs=12)
+        cv=kfold, scoring='accuracy', n_jobs=12)
     json_res['batch_label_cv'] = {
         'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
     print('Original:')
@@ -141,6 +143,8 @@ def main():
     nobe_cormat = np.corrcoef(all_res['recons_no_batch'][~subject_index])
     nobe_cormat_mean = nobe_cormat[
         np.triu_indices_from(nobe_cormat, k=1)].mean()
+    json_res['qc_cor'] = {'ori_cor_mean': ori_cormat_mean,
+                          'nobe_cor_mean': nobe_cormat_mean}
     print('qc样本mean of cor')
     print('Original:')
     print(ori_cormat_mean)
@@ -155,10 +159,10 @@ def main():
     print('使用全部数据进行cancer vs no cancer的10-CV评价')
     cv_res_ori_label = cross_val_score(
         estimator, subject_res['original_x'], subject_res['ys'][:, 2],
-        cv=10, scoring='roc_auc', n_jobs=12)
+        cv=kfold, scoring='roc_auc', n_jobs=12)
     cv_res_nobe_label = cross_val_score(
         estimator, subject_res['recons_no_batch'], subject_res['ys'][:, 2],
-        cv=10, scoring='roc_auc', n_jobs=12)
+        cv=kfold, scoring='roc_auc', n_jobs=12)
     json_res['true_label_cv'] = {
         'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
     print('Original:')
@@ -186,7 +190,7 @@ def main():
     # no batch effect
     X = subject_res['recons_no_batch']
     cv_res_nobe_label = cross_val_score(
-        estimators, X, Y, cv=10, scoring='roc_auc')
+        estimators, X, Y, cv=kfold, scoring='roc_auc')
 
     json_res['true_label_cv_feature_selection'] = {
         'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}

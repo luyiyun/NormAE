@@ -131,7 +131,7 @@ class ClswithLabelSmoothLoss(nn.Module):
 
 
 class OrderLoss(nn.Module):
-    def __init__(self, leastsquare=False, group=None):
+    def __init__(self, leastsquare=False):
         '''
         discriminator的关于injection.order的部分，可以选择使用rank loss和最小
         二乘回归，如果是使用最小二乘回归，则直接将injection.order当做一个连续
@@ -143,19 +143,18 @@ class OrderLoss(nn.Module):
 
         args:
             leastsquare: Boolean，是否使用mse来代替rank loss；
-            group: tensor, shape=(batch,)，用于计算rank loss使用;
         '''
         super(OrderLoss, self).__init__()
         self.leastsquare=leastsquare
-        self.group = group
         self.mse = nn.MSELoss()
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, group=None):
         '''
 
         args:
             pred: 是预测的order部分，batch x 1;
             target: size=(batch,)，储存injection.order信息;
+            group: tensor, shape=(batch,)，用于计算rank loss使用;
         '''
         pred = pred.squeeze()
         target = target.float()
@@ -163,19 +162,21 @@ class OrderLoss(nn.Module):
             return self.mse(pred, target)
         else:
             # rank loss
-            low, high = self._comparable_pairs(target)
+            low, high = self._comparable_pairs(target, group)
             low_pred, high_pred = pred[low], pred[high]
             diff = (1 - high_pred + low_pred).clamp(min=0)
             diff = diff ** 2
             return diff.mean()
 
-    def _comparable_pairs(self, true_rank):
+    @staticmethod
+    def _comparable_pairs(true_rank, group=None):
         '''
         返回所有可比的样本对的indice
 
         args:
             true_rank: 真实的每个样本的排序；
             true_batch: 每个样本属于的批次标签；
+            group: tensor, shape=(batch,)，用于计算rank loss使用;
 
         '''
         # 这里接受的rank_batch可能只有rank
@@ -187,8 +188,8 @@ class OrderLoss(nn.Module):
         time_mask = true_rank[pairs1] < true_rank[pairs2]
         pairs1, pairs2 = pairs1[time_mask], pairs2[time_mask]
         # 如果存在group，则需要再排除不在一个group内的pairs
-        if self.group is not None:
-            batch_mask = self.group[pairs1] == self.group[pairs2]
+        if group is not None:
+            batch_mask = group[pairs1] == group[pairs2]
             pairs1, pairs2 = pairs1[batch_mask], pairs2[batch_mask]
         return pairs1, pairs2
 
@@ -196,7 +197,7 @@ class OrderLoss(nn.Module):
 class ClsOrderLoss(nn.Module):
     def __init__(
         self, cls_weight=1.0, order_weight=1.0, cls_leastsquare=False,
-        order_leastsquare=False, cls_smoothing=0.2, order_group=None
+        order_leastsquare=False, cls_smoothing=0.2
     ):
         '''
         这个是将上面两个loss结合在一起的loss module，便于管理和使用。
@@ -207,19 +208,17 @@ class ClsOrderLoss(nn.Module):
             cls_leastsquare: ClswithLabelSmoothLoss的leastsquare参数；
             order_leastsquare: OrderLoss的leastsquare参数；
             cls_smoothing: ClswithLabelSmoothLoss的smoothin参数；
-            order_group: OrderLoss的group参数；
         '''
         assert cls_weight > 0.0 or order_weight > 0.0
         super(ClsOrderLoss, self).__init__()
         self.cls_weight, self.order_weight = cls_weight, order_weight
         self.cls_loss = ClswithLabelSmoothLoss(
             smoothing=cls_smoothing, leastsquare=cls_leastsquare)
-        self.order_loss = OrderLoss(
-            leastsquare=order_leastsquare, group=order_group)
+        self.order_loss = OrderLoss(leastsquare=order_leastsquare)
 
     def forward(
         self, cls_pred=None, cls_target=None, order_pred=None,
-        order_target=None
+        order_target=None, order_group=None
     ):
         '''
         args:
@@ -227,6 +226,7 @@ class ClsOrderLoss(nn.Module):
             cls_target: 分类的标签，batch, [1, 2, 3, 2];
             order_pred: 排序的预测，batch;
             order_target: 排序的标签, batch；
+            order_group: OrderLoss的group参数；
         '''
         all_loss = 0.
         warning_indice = 0
@@ -238,7 +238,7 @@ class ClsOrderLoss(nn.Module):
             warning_indice += 1
         if order_pred is not None and order_pred is not None:
             order_loss_output = self.order_weight * \
-                self.order_loss(order_pred, order_target)
+                self.order_loss(order_pred, order_target, order_group)
             all_loss += order_loss_output
         else:
             warning_indice += 1
@@ -253,29 +253,22 @@ def test():
     order_pred = torch.randn(32, 1)
     order_target = torch.arange(32).permute(0)
 
-    criterion = ClsOrderLoss(
-        1.0, 1.0, True, True, 0.2, cls_target
-    )
+    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
+    print(criterion(
+        cls_pred, cls_target, order_pred, order_target, cls_target))
+
+    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
+    print(criterion(
+        None, None, order_pred, order_target, cls_target))
+
+    criterion = ClsOrderLoss(1.0, 1.0, False, False, 0.2)
+    print(criterion(
+        cls_pred, cls_target, order_pred, order_target, cls_target))
+
+    criterion = ClsOrderLoss(1.0, 1.0, False, False, 0.0)
     print(criterion(cls_pred, cls_target, order_pred, order_target))
 
-    criterion = ClsOrderLoss(
-        1.0, 1.0, True, True, 0.2, cls_target
-    )
-    print(criterion(None, None, order_pred, order_target))
-
-    criterion = ClsOrderLoss(
-        1.0, 1.0, False, False, 0.2, cls_target
-    )
-    print(criterion(cls_pred, cls_target, order_pred, order_target))
-
-    criterion = ClsOrderLoss(
-        1.0, 1.0, False, False, 0.0, None
-    )
-    print(criterion(cls_pred, cls_target, order_pred, order_target))
-
-    criterion = ClsOrderLoss(
-        1.0, 1.0, True, True, 0.2, cls_target
-    )
+    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
     print(criterion(None, None, None, None))
 
 
