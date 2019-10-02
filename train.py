@@ -218,7 +218,8 @@ class BatchEffectTrainer:
             all_data = ConcatData(datas['subject'], datas['qc'])
             all_reses_dict = generate(
                 self.models, all_data, no_be_num=self.no_be_num,
-                device=self.device, bs=self.bs, nw=self.nw
+                device=self.device, bs=self.bs, nw=self.nw,
+                verbose=False, ica=False
             )
             # 对数据进行对应的pca
             subject_pca, qc_pca = pca_for_dict(all_reses_dict)
