@@ -83,6 +83,9 @@ class Config:
 
         # 已经基本确定下来不动的
         self.parser.add_argument(
+            '--visdom_port', default=8097, type=int,
+        )
+        self.parser.add_argument(
             '--data_normalization', default='standard',
             help="数据标准化类型，默认是standard，还可以是minmax、maxabs或robust"
         )

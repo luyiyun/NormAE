@@ -13,11 +13,11 @@ from sklearn.decomposition import PCA
 
 
 class VisObj:
-    def __init__(self):
+    def __init__(self, port=8097):
         self.epoch_idx = {}  # 每个窗口的横坐标画到了哪里，进行记录
         self.batch_losses = {}
         self.epoch_losses = {}
-        self.vis = visdom.Visdom()
+        self.vis = visdom.Visdom(port=port)
         self.pca_plot = pca_plot
 
     def add_epoch_loss(self, winname='epoch_losses', **loss_dict):

@@ -29,7 +29,8 @@ class BatchEffectTrainer:
         ae_disc_weight=(1.0, 1.0), label_smooth=0.2,
         train_with_qc=False, spectral_norm=False, schedual_stones=[3000],
         cls_leastsquare=False, order_leastsquare=False,
-        cls_order_weight=(1.0, 1.0), use_batch_for_order=True
+        cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
+        visdom_port=8097
     ):
         '''
         in_features: the number of input features;
@@ -145,7 +146,7 @@ class BatchEffectTrainer:
         self.use_batch_for_order = use_batch_for_order
 
         # 可视化工具
-        self.visobj = VisObj()
+        self.visobj = VisObj(visdom_port)
 
     def fit(self, datas):
         ''' datas是多个Dataset对象的可迭代对象 '''
@@ -353,7 +354,8 @@ def main():
         cls_leastsquare=config.args.cls_leastsquare,
         order_leastsquare=config.args.order_leastsquare,
         cls_order_weight=config.args.cls_order_weight,
-        use_batch_for_order=config.args.use_batch_for_order
+        use_batch_for_order=config.args.use_batch_for_order,
+        visdom_port=config.args.visdom_port
     )
 
     best_models, hist = trainer.fit(datas)
