@@ -86,6 +86,14 @@ class Config:
             '--visdom_port', default=8097, type=int,
         )
         self.parser.add_argument(
+            '--ae_units', default=[300, 300, 300], type=int,
+            nargs="+"
+        )
+        self.parser.add_argument(
+            '--disc_units', default=[300, 300], type=int,
+            nargs='+'
+        )
+        self.parser.add_argument(
             '--data_normalization', default='standard',
             help="数据标准化类型，默认是standard，还可以是minmax、maxabs或robust"
         )

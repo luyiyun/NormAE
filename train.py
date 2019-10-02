@@ -30,7 +30,8 @@ class BatchEffectTrainer:
         train_with_qc=False, spectral_norm=False, schedual_stones=[3000],
         cls_leastsquare=False, order_leastsquare=False,
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
-        visdom_port=8097
+        visdom_port=8097, encoder_hiddens=[300, 300, 300],
+        decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300]
     ):
         '''
         in_features: the number of input features;
@@ -83,17 +84,17 @@ class BatchEffectTrainer:
         # 得到3个模型
         self.models = {
             'encoder': SimpleCoder(
-                [in_features, 300, 300, 300, bottle_num], lrelu=True,
+                [in_features] + encoder_hiddens + [bottle_num], lrelu=True,
                 last_act=None, norm=nn.BatchNorm1d, dropout=None,
                 spectral_norm=spectral_norm
             ).to(device),
             'decoder': SimpleCoder(
-                [bottle_num, 300, 300, 300, in_features], lrelu=True,
+                [bottle_num] + decoder_hiddens + [in_features], lrelu=True,
                 last_act=None, norm=nn.BatchNorm1d, dropout=None,
                 spectral_norm=spectral_norm
             ).to(device),
             'discriminator': SimpleCoder(
-                [no_be_num, 300, 300, logit_dim], lrelu=False,
+                [no_be_num] + disc_hiddens + [logit_dim], lrelu=False,
                 norm=nn.BatchNorm1d, last_act=None,
                 spectral_norm=spectral_norm, return_hidden=False
             ).to(device)
@@ -355,7 +356,10 @@ def main():
         order_leastsquare=config.args.order_leastsquare,
         cls_order_weight=config.args.cls_order_weight,
         use_batch_for_order=config.args.use_batch_for_order,
-        visdom_port=config.args.visdom_port
+        visdom_port=config.args.visdom_port,
+        decoder_hiddens=config.args.ae_units,
+        encoder_hiddens=config.args.ae_units,
+        disc_hiddens=config.args.disc_units
     )
 
     best_models, hist = trainer.fit(datas)

@@ -26,6 +26,7 @@ def generate(
         It's generator，the element is dict，the keys are "recons_no_batch、
         recons_all、original_x、ys”, the values aredataframe.
     '''
+    # 准备数据集和模型
     for m in models.values():
         m.eval()
     if isinstance(data_loader, data.Dataset):
@@ -33,24 +34,32 @@ def generate(
             data_loader, batch_size=bs, num_workers=nw
         )
     x_recon, x_recon_ica, x_ori, x_recon_be, ys, codes = [], [], [], [], [], []
-    # 先把encode部分完成
+
+    # encoding
     if verbose:
         print('----- encoding -----')
+        iterator = tqdm(data_loader, 'encode and decode: ')
+    else:
+        iterator = data_loader
     with torch.no_grad():
-        if verbose:
-            iterator = tqdm(data_loader, 'encoder: ')
-        else:
-            iterator = data_loader
         for batch_x, batch_y in iterator:
+            # X和Y都备份一次
             x_ori.append(batch_x)
             ys.append(batch_y)
+            # 计算hidden codes
             batch_x = batch_x.to(device, torch.float)
             hidden = models['encoder'](batch_x)[-1]
             codes.append(hidden)
+            # AE重建
             x_recon_be.append(models['decoder'](hidden)[-1])
+            # 去除批次重建
+            hidden_copy = hidden.clone()
+            hidden_copy[:, no_be_num:] = hidden_copy[:, no_be_num:].mean(dim=0)
+            x_recon.append(models['decoder'](hidden_copy)[-1])
     res = {
         'original_x': torch.cat(x_ori), 'ys': torch.cat(ys),
-        'codes':torch.cat(codes), 'recons_all': torch.cat(x_recon_be),
+        'codes': torch.cat(codes), 'recons_all': torch.cat(x_recon_be),
+        'recons_no_batch': torch.cat(x_recon)
     }
     for k, v in res.items():
         if v is not None:
@@ -72,41 +81,17 @@ def generate(
                     index=data_loader.dataset.X_df.index,
                 )
 
-    # 将codes的batch effect部分使用其均值来替代
-    if verbose:
-        print('----- decoding without ICA -----')
-    use_data = res['codes'].values.copy()
-    use_data[:, no_be_num:] = use_data[:, no_be_num].mean(axis=0)
-    use_data = data.TensorDataset(torch.tensor(use_data))
-    use_data = data.DataLoader(use_data, batch_size=bs, num_workers=nw)
-    # decode部分
-    if verbose:
-        iterator = tqdm(use_data, 'decode without ICA: ')
-    else:
-        iterator = use_data
-    with torch.no_grad():
-        for hidden, in iterator:
-            hidden = hidden.to(device, torch.float)
-            batch_x_recon = models['decoder'](hidden)[-1]
-            x_recon.append(batch_x_recon)
-    res['recons_no_batch'] = pd.DataFrame(
-        torch.cat(x_recon).detach().cpu().numpy(),
-        index=data_loader.dataset.X_df.index,
-        columns=data_loader.dataset.X_df.columns
-    )
 
     # 进行ICA
     if ica:
         if verbose:
             print('----- decoding with ICA -----')
             print('FastICA beginning!!')
-        if no_be_num is None:
-            ica_use_data = res['codes'].values
-        else:
-            ica_use_data = res['codes'].values[:, no_be_num:]
+
+        # 使用标签对ICA分解后的数据进行筛选，选择没有意义的成分
+        ica_use_data = res['codes'].values[:, no_be_num:]
         ica_estimator = FastICA()
         transfered_data = ica_estimator.fit_transform(ica_use_data)
-        # 使用标签对ICA分解后的数据进行筛选，选择没有意义的成分
         _, pvals = f_classif(transfered_data, res['ys'].values[:, 1])
         mask_sig = pvals < 0.05
         if verbose:
