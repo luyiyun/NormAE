@@ -40,7 +40,7 @@ def generate(
         if verbose:
             iterator = tqdm(data_loader, 'encoder: ')
         else:
-            iterator = data_l
+            iterator = data_loader
         for batch_x, batch_y in iterator:
             x_ori.append(batch_x)
             ys.append(batch_y)
