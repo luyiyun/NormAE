@@ -221,7 +221,10 @@ def main():
     # mis = mutual_info_classif(X_nobe, Y)
     # vips_sort_indice_nobe = np.argsort(mis)[::-1]
 
-    estimator = RandomForestClassifier(100)
+    estimator = Pipeline([
+        ('scale', StandardScaler()),
+        ('cls', RandomForestClassifier(100))
+    ])
 
     cv = StratifiedKFold(5, shuffle=True, random_state=args.rand_seed)
     features_num = np.arange(100, 1100, 100).tolist()
