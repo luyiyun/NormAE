@@ -176,7 +176,7 @@ def main():
     # ----- 变量筛选再进行交叉验证 -----
     estimators = Pipeline([
         ('fdr', SelectFdr()),
-        ('pls', SelectFromModel(PLSwithVIP(2), threshold=1.)),
+        ('pls', SelectFromModel(PLSwithVIP(10), threshold=1.)),
         ('cls', RandomForestClassifier(100))
     ])
     # original
@@ -202,6 +202,57 @@ def main():
     print(np.mean(cv_res_nobe_label))
     print('')
 
+    # ----- 相同数量变量的AUC评价5-CV -----
+    # original
+    print('使用RF-VIM排序，看不同数量的features对应的AUCs')
+    X_ori = subject_res['original_x']
+    X_nobe = subject_res['recons_no_batch']
+    Y = subject_res['ys'][:, 2]
+
+    pls = RandomForestClassifier(100)
+    pls.fit(X_ori, Y)
+    vips_ori = pls.feature_importances_
+    vips_sort_indice_ori = np.argsort(vips_ori)[::-1]
+    pls.fit(X_nobe, Y)
+    vips_nobe = pls.feature_importances_
+    vips_sort_indice_nobe = np.argsort(vips_nobe)[::-1]
+    # mis = mutual_info_classif(X_ori, Y)
+    # vips_sort_indice_ori = np.argsort(mis)[::-1]
+    # mis = mutual_info_classif(X_nobe, Y)
+    # vips_sort_indice_nobe = np.argsort(mis)[::-1]
+
+    estimator = RandomForestClassifier(100)
+
+    cv = StratifiedKFold(5, shuffle=True, random_state=args.rand_seed)
+    features_num = np.arange(100, 1100, 100).tolist()
+    ori_scores = []
+    nobe_scores = []
+    for fn in features_num:
+        print('features number: %d' % fn)
+        need_features = vips_sort_indice_ori[:fn]
+        X_part = X_ori[:, need_features]
+        cv_res_ori_part = cross_val_score(estimator, X_part, Y, cv=cv,
+                                          scoring='roc_auc', n_jobs=5)
+        ori_scores.append(np.mean(cv_res_ori_part))
+
+        need_features = vips_sort_indice_nobe[:fn]
+        X_part = X_nobe[:, need_features]
+        cv_res_ori_part = cross_val_score(estimator, X_part, Y, cv=cv,
+                                          scoring='roc_auc', n_jobs=5)
+        nobe_scores.append(np.mean(cv_res_ori_part))
+
+    json_res['equal_features_num'] = {
+        'featurs_num': features_num,
+        'ori': ori_scores,
+        'nobe': nobe_scores
+    }
+    print('features_num')
+    print(features_num)
+    print('Original:')
+    print(ori_scores)
+    print('No Batch Effect:')
+    print(nobe_scores)
+    print('')
 
 
     # 保存结果的dict以json的格式保存
