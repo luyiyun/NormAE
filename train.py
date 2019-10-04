@@ -31,7 +31,8 @@ class BatchEffectTrainer:
         cls_leastsquare=False, order_leastsquare=False,
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
-        decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300]
+        decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
+        early_stop=False
     ):
         '''
         in_features: the number of input features;
@@ -75,7 +76,7 @@ class BatchEffectTrainer:
             logit_dim = batch_label_num + 1
         elif self.cls_weight > 0.0:
             logit_dim = batch_label_num
-        elif self.order_weight:
+        elif self.order_weight > 0.0:
             logit_dim = 1
         else:
             raise ValueError(
@@ -145,9 +146,16 @@ class BatchEffectTrainer:
         self.no_be_num = no_be_num
         self.train_with_qc = train_with_qc
         self.use_batch_for_order = use_batch_for_order
+        self.early_stop = early_stop
 
         # 可视化工具
         self.visobj = VisObj(visdom_port)
+
+        # 提前停止使用
+        self.early_stop_objs = {
+            'best_epoch': -1, 'best_qc_loss': 1000, 'best_qc_distance': 1000,
+            'best_models': None, 'index': 0, 'best_score': 2000
+        }
 
     def fit(self, datas):
         ''' datas是多个Dataset对象的可迭代对象 '''
@@ -164,7 +172,7 @@ class BatchEffectTrainer:
         }
 
         # 开始进行多个epoch训练
-        for _ in tqdm(range(self.epoch), 'Epoch: '):
+        for e in tqdm(range(self.epoch), 'Epoch: '):
             ## train phase
             # 实例化3个loss对象，用于计算epoch loss
             ad_loss_train_obj = mm.Loss()
@@ -218,10 +226,10 @@ class BatchEffectTrainer:
 
             # 使用当前训练的模型去得到去批次结果
             all_data = ConcatData(datas['subject'], datas['qc'])
-            all_reses_dict = generate(
+            all_reses_dict, qc_loss = generate(
                 self.models, all_data, no_be_num=self.no_be_num,
                 device=self.device, bs=self.bs, nw=self.nw,
-                verbose=False, ica=False
+                verbose=False, ica=False, compute_qc_loss=True
             )
             # 对数据进行对应的pca
             subject_pca, qc_pca = pca_for_dict(all_reses_dict)
@@ -231,7 +239,50 @@ class BatchEffectTrainer:
             self.visobj.vis.matplot(plt, win='PCA', opts={'title': 'PCA'})
             plt.close()
 
+            ## early stopping
+            qc_dist = mm.mean_distance(qc_pca['recons_no_batch'])
+            self.visobj.add_epoch_loss(
+                winname='qc_loss', qc_loss=qc_loss)
+            self.visobj.add_epoch_loss(
+                winname='qc_distance', qc_dist=qc_dist
+            )
+            if e > 200 and self.early_stop:
+                early_stop_index = self.early_stop(e, qc_dist, qc_loss)
+                if early_stop_index:
+                    print('')
+                    print('Now model training is early stopped.')
+                    print('The best epoch is %d' %
+                        self.early_stop_objs['best_epoch'])
+                    print('The best qc loss is %.4f' %
+                        self.early_stop_objs['best_qc_loss'])
+                    print('The best qc distance is %.4f' %
+                        self.early_stop_objs['best_qc_distance'])
+                    break
+        if self.early_stop:
+            for k, v in self.models.items():
+                v.load_state_dict(self.early_stop_objs['best_models'][k])
+            self.models.update(self.early_stop_objs)
+
         return self.models, self.history
+
+    def early_stop(self, e, qc_dist, qc_loss):
+        early_stop_score = qc_dist + qc_loss * 100
+        if early_stop_score < self.early_stop_objs['best_score']:
+            self.early_stop_objs['best_epoch'] = e
+            self.early_stop_objs['best_models'] = {
+                k: copy.deepcopy(v.state_dict())
+                for k, v in self.models.items()
+            }
+            self.early_stop_objs['best_qc_loss'] = qc_loss
+            self.early_stop_objs['best_qc_distance'] = qc_dist
+            self.early_stop_objs['best_score'] = early_stop_score
+            self.early_stop_objs['index'] = 0
+        else:
+            self.early_stop_objs['index'] += 1
+
+        if self.early_stop_objs['index'] > 200:
+            return True
+        return False
 
     def _forward_autoencode(self, batch_x, batch_y):
         ''' autoencode进行训练的部分 '''
@@ -306,17 +357,6 @@ class BatchEffectTrainer:
         self.optimizers['discriminate'].step()
         return adversarial_loss
 
-def check_update_dirname(dirname, indx=0):
-    if os.path.exists(dirname):
-        if indx > 0:
-            dirname = dirname[:-len(str(indx))]
-        indx += 1
-        dirname = dirname + str(indx)
-        dirname = check_update_dirname(dirname, indx)
-    else:
-        os.makedirs(dirname)
-    return dirname
-
 
 def main():
     from config import Config
@@ -359,7 +399,8 @@ def main():
         visdom_port=config.args.visdom_port,
         decoder_hiddens=config.args.ae_units,
         encoder_hiddens=config.args.ae_units,
-        disc_hiddens=config.args.disc_units
+        disc_hiddens=config.args.disc_units,
+        early_stop=config.args.early_stop
     )
 
     best_models, hist = trainer.fit(datas)

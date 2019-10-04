@@ -5,17 +5,20 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import torch
+import torch.nn as nn
 import torch.utils.data as data
 from sklearn.decomposition import FastICA
 from sklearn.feature_selection import f_classif
 
 from datasets import get_demo_data, get_metabolic_data, ConcatData
 from transfer import Normalization
+from metrics import Loss
 
 
 def generate(
     models, data_loader, no_be_num=None, bs=64, nw=12,
-    device=torch.device('cuda:0'), verbose=True, ica=True
+    device=torch.device('cuda:0'), verbose=True, ica=True,
+    compute_qc_loss=False
 ):
     '''
     data_loaders: Dataset对象或Dataloader对象
@@ -28,12 +31,15 @@ def generate(
     '''
     # 准备数据集和模型
     for m in models.values():
-        m.eval()
+        if isinstance(m, nn.Module):
+            m.eval()
     if isinstance(data_loader, data.Dataset):
         data_loader = data.DataLoader(
             data_loader, batch_size=bs, num_workers=nw
         )
     x_recon, x_recon_ica, x_ori, x_recon_be, ys, codes = [], [], [], [], [], []
+    qc_loss = Loss()
+    mse = nn.MSELoss()
 
     # encoding
     if verbose:
@@ -54,8 +60,20 @@ def generate(
             x_recon_be.append(models['decoder'](hidden)[-1])
             # 去除批次重建
             hidden_copy = hidden.clone()
-            hidden_copy[:, no_be_num:] = hidden_copy[:, no_be_num:].mean(dim=0)
+            # hidden_copy[:, no_be_num:] = hidden_copy[:, no_be_num:].mean(dim=0)
+            hidden_copy[:, no_be_num:] = 0
             x_recon.append(models['decoder'](hidden_copy)[-1])
+            # 是否计算qc的loss，在训练的时候有用
+            if compute_qc_loss:
+                qc_index = batch_y[:, -1] == 0.
+                if qc_index.sum() > 0:
+                    batch_qc_loss = mse(batch_x[qc_index],
+                                        x_recon_be[-1][qc_index])
+                    qc_loss.add(
+                        batch_qc_loss, qc_index.sum().detach().cpu().item())
+                else:
+                    qc_loss.add(torch.tensor(0.), 0)
+
     res = {
         'original_x': torch.cat(x_ori), 'ys': torch.cat(ys),
         'codes': torch.cat(codes), 'recons_all': torch.cat(x_recon_be),
@@ -123,6 +141,9 @@ def generate(
             index=data_loader.dataset.X_df.index,
             columns=data_loader.dataset.X_df.columns
         )
+
+    if compute_qc_loss:
+        return res, qc_loss.value()
     return res
 
 
@@ -190,7 +211,8 @@ def generate_forAE(
     idxs = np.argpartition(pvals, be_num)[:be_num]
     print('min %d codes: %s, the indices are %s' %
           (be_num, str(pvals[idxs]), str(idxs)))
-    aov_use_data[:, idxs] = aov_use_data[:, idxs].mean(axis=0)
+    # aov_use_data[:, idxs] = aov_use_data[:, idxs].mean(axis=0)
+    aov_use_data[:, idxs] = 0
     aov_use_data = data.TensorDataset(torch.tensor(aov_use_data))
     aov_use_data = data.DataLoader(
         aov_use_data, batch_size=bs, num_workers=nw)
@@ -212,7 +234,8 @@ def generate_forAE(
     aov_use_data2 = res['codes'].values.copy()
     bool_index = pvals < 0.05
     print('%d codes significate!' % sum(bool_index))
-    aov_use_data2[:, bool_index] = aov_use_data2[:, bool_index].mean(axis=0)
+    # aov_use_data2[:, bool_index] = aov_use_data2[:, bool_index].mean(axis=0)
+    aov_use_data2[:, bool_index] = 0
     aov_use_data2 = data.TensorDataset(torch.tensor(aov_use_data2))
     aov_use_data2 = data.DataLoader(
         aov_use_data2, batch_size=bs, num_workers=nw)

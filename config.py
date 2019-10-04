@@ -24,8 +24,7 @@ class Config:
         self.parser = argparse.ArgumentParser()
         # 经常进行更改的
         self.parser.add_argument(
-            '-s', '--save', default='./save',
-            help='保存的文件夹路径，如果有重名，会在其后加-来区别'
+            '-s', '--save', default='./save', help='保存结果的文件夹路径'
         )
         self.parser.add_argument(
             '-t', '--task', default='T3',
@@ -48,14 +47,6 @@ class Config:
             '--ae_disc_weight', type=float, default=(1, 1), nargs=2,
             help="重建误差权重和对抗权重，默认是1.0和1.0"
         )
-        # self.parser.add_argument(
-        #     '--supervise', default='both',
-        #     help=(
-        #         "用于discriminator的标签，如果是order则"
-        #         "只有排序，如果是cls则只有分类，如果是both则两者都有，默认是"
-        #         "both"
-        #     )
-        # )
         self.parser.add_argument(
             '--cls_order_weight', default=(1.0, 1.0), nargs=2, type=int,
             help="cls loss和order loss在判别是所占的比例，默认是1:1"
@@ -80,6 +71,7 @@ class Config:
             '--use_batch_for_order', action='store_true',
             help="if use, compute rank loss with batch"
         )
+        self.parser.add_argument('--early_stop', action='store_true')
 
         # 已经基本确定下来不动的
         self.parser.add_argument(

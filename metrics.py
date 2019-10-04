@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from torchnet.meter.meter import Meter
 import sklearn.metrics as metrics
+import scipy.spatial.distance as dist
 
 
 class Loss(Meter):
@@ -27,10 +28,14 @@ class Loss(Meter):
         return self.running_loss / self.num_samples
 
 
+def mean_distance(mat):
+    distance = dist.pdist(mat)
+    return np.mean(distance)
+
+
 def test():
-    a = np.random.rand(100, 1000)
-    m = MeanDistance()
-    print(m(a))
+    a = np.random.rand(100, 2)
+    print(mean_distance(a))
 
 
 if __name__ == '__main__':

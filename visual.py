@@ -5,6 +5,7 @@ import visdom
 import torch
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 
 '''
@@ -54,8 +55,14 @@ def pca_for_dict(all_dict, ori=True, n_components=2, sub_qc_split=True):
     注意，没有被pca处理的all_dict中的部分，会原样返回。
     '''
     # 因为generate的结果改成了dict of dfs
-    pca_dict = {k: v.values for k, v in all_dict.items()}
     pca = PCA(n_components)
+    ss = StandardScaler()
+    pca_dict = {}
+    for k, v in all_dict.items():
+        if k in ['recons_no_batch', 'recons_all', 'original_x']:
+            pca_dict[k] = ss.fit_transform(v.values)
+        elif k == 'ys':
+            pca_dict[k] = v.values
     if ori:
         # pca for original_x
         pca_dict['original_x'] = pca.fit_transform(pca_dict['original_x'])

@@ -80,7 +80,10 @@ def main():
     print('关于batch label的10-cv评价')
     # 使用所有的数据, original
     # 进行10-CV
-    estimator = RandomForestClassifier(n_estimators=100)
+    estimator = Pipeline([
+        ('scale', StandardScaler()),
+        ('rf', RandomForestClassifier(n_estimators=100))
+    ])
     cv_res_ori = cross_val_score(
         estimator, all_res['original_x'], all_res['ys'][:, 1],
         cv=kfold, scoring='accuracy', n_jobs=12)
@@ -98,7 +101,11 @@ def main():
     print('')
 
     # ----- 使用轮廓系数来进行评价
-    pca = PCA(3)
+    pca = Pipeline([
+        ('scale', StandardScaler()),
+        ('pca', PCA(3))
+    ])
+
     ori_res_pca = pca.fit_transform(all_res['original_x'])
     nobe_res_pca = pca.fit_transform(all_res['recons_no_batch'])
 
