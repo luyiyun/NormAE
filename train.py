@@ -2,6 +2,7 @@ import os
 import copy
 import json
 from itertools import chain
+from functools import partial
 
 import torch
 import torch.nn as nn
@@ -14,7 +15,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, ClsOrderLoss, ResBotNet
+from networks import SimpleCoder, ClsOrderLoss, ResBotNet, ResNet2
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -101,7 +102,7 @@ class BatchEffectTrainer:
                     spectral_norm=spectral_norm, return_hidden=False
                 ).to(device)
             }
-        elif net_type == 'resnet':
+        elif net_type == 'resnet1':
             self.models = {
                 'encoder': ResBotNet(
                     [in_features] + encoder_hiddens + [bottle_num], 50
@@ -114,6 +115,18 @@ class BatchEffectTrainer:
                     return_hidden=False
                 ).to(device)
             }
+        elif net_type == 'resnet2':
+            self.models = {
+                'encoder': ResNet2([in_features] + encoder_hiddens + [bottle_num]
+                                   ).to(device),
+                'decoder': ResNet2([bottle_num] + decoder_hiddens + [in_features]
+                ).to(device),
+                'discriminator': ResNet2(
+                    [no_be_num] + disc_hiddens + [logit_dim],
+                    return_hidden=False
+                ).to(device)
+            }
+
         self.num_encoder_layers = len(self.models['encoder'].layers)
 
         # 得到两个optim

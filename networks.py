@@ -5,6 +5,40 @@ import torch.nn as nn
 ''' 网络结构部分 '''
 
 
+class ResBlock2(nn.Module):
+    def __init__(self, in_f, out_f, act, bottle_f, dropout=None):
+        super(ResBlock2, self).__init__()
+        self.f = nn.Sequential(
+            nn.BatchNorm1d(in_f), act, nn.Linear(in_f, bottle_f),
+            nn.BatchNorm1d(bottle_f), act, nn.Linear(bottle_f, out_f)
+        )
+        self.lin = nn.Linear(in_f, out_f)
+
+    def forward(self, x):
+        return self.f(x) + self.lin(x)
+
+
+class ResNet2(nn.Module):
+    def __init__(self, units, return_hidden=True):
+        super(ResNet2, self).__init__()
+        self.layers = nn.ModuleList()
+        for i, (in_f, out_f) in enumerate(zip(units[:-1], units[1:])):
+            one_layer = [ResBlock2(in_f, out_f, nn.LeakyReLU(), int((in_f+out_f)/2))]
+            if i < len(units) - 2:
+                one_layer.append(nn.LeakyReLU())
+            self.layers.append(nn.Sequential(*one_layer))
+        self.return_hidden = return_hidden
+
+    def forward(self, x):
+        layers_out = []
+        for layer in self.layers:
+            x = layer(x)
+            layers_out.append(x)
+        if self.return_hidden:
+            return layers_out
+        return layers_out[-1]
+
+
 def bottle_linear(in_f, out_f, bottle_f, act=nn.LeakyReLU(), dropout=0.0):
     ''' in_f-bottle_f --> act --> dropout --> bottle_f-out_f '''
     return nn.Sequential(
