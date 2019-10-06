@@ -5,6 +5,83 @@ import torch.nn as nn
 ''' 网络结构部分 '''
 
 
+def bottle_linear(in_f, out_f, bottle_f, act=nn.LeakyReLU(), dropout=0.0):
+    ''' in_f-bottle_f --> act --> dropout --> bottle_f-out_f '''
+    return nn.Sequential(
+        nn.Linear(in_f, bottle_f), act, nn.Dropout(dropout, inplace=True),
+        nn.Linear(bottle_f, out_f)
+    )
+
+
+class ResBotBlock(nn.Module):
+    '''
+    x --> (bottle_neck_layer --> act)*(n-1) --> bottle_neck_layer --> +x --> bn
+    '''
+    def __init__(
+        self, in_f, out_f, act, bottle_units, bottle_act=None, dropout=0.5
+    ):
+        super(ResBotBlock, self).__init__()
+        if not isinstance(bottle_units, (tuple, list)):
+            bottle_units = [bottle_units]
+        inter_f = out_f if len(bottle_units) == 1 else int((in_f + out_f) / 2)
+        if bottle_act is None:
+            bottle_act = act
+        self.bottle_modules = []
+        for i, bu in enumerate(bottle_units):
+            if i == 0:
+                self.bottle_modules.append(
+                    bottle_linear(in_f, inter_f, bu, bottle_act, dropout))
+            elif i == len(bottle_units) - 1:
+                self.bottle_modules.append(
+                    bottle_linear(inter_f, out_f, bu, bottle_act, dropout))
+            else:
+                self.bottle_modules.append(
+                    bottle_linear(inter_f, inter_f, bu, bottle_act, dropout))
+            if i != (len(bottle_units) - 1):
+                self.bottle_modules.append(act)
+        self.bottle_modules = nn.Sequential(*self.bottle_modules)
+        self.bn = nn.BatchNorm1d(out_f)
+
+    def forward(self, x):
+        identity = x
+        out = self.bottle_modules(x)
+        out += identity
+        return self.bn(out)
+
+
+class ResBotNet(nn.Module):
+    def __init__(self, units, bottle_unit=50, dropout=0.0, return_hidden=True):
+        super(ResBotNet, self).__init__()
+        in_f = units[0]
+        out_f = units[-1]
+        act = nn.LeakyReLU()
+        bottle_units = [bottle_unit] * 2
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Sequential(nn.Linear(in_f, units[1]), act))
+        for i, j in zip(units[1:-2], units[2:-1]):
+            one_layer = [
+                ResBotBlock(i, j, act, bottle_units, dropout=dropout),
+                act
+            ]
+            self.layers.append(nn.Sequential(*one_layer))
+        self.layers.append(nn.Sequential(nn.Linear(units[-2], out_f)))
+        self.return_hidden = return_hidden
+
+    def forward(self, x):
+        layers_out = []
+        for layer in self.layers:
+            x = layer(x)
+            layers_out.append(x)
+        if self.return_hidden:
+            return layers_out
+        return layers_out[-1]
+
+    def reset_parameters(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.reset_parameters()
+
+
 class SimpleCoder(nn.Module):
     def __init__(
         self, units, dropout=None, norm=None, lrelu=True, last_act=None,
@@ -163,6 +240,8 @@ class OrderLoss(nn.Module):
         else:
             # rank loss
             low, high = self._comparable_pairs(target, group)
+            if len(low) == 0:  # 有可能是空的，这时求mean是nan
+                return torch.tensor(0.).float()
             low_pred, high_pred = pred[low], pred[high]
             diff = (1 - high_pred + low_pred).clamp(min=0)
             diff = diff ** 2

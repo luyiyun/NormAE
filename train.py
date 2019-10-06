@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, ClsOrderLoss
+from networks import SimpleCoder, ClsOrderLoss, ResBotNet
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -32,7 +32,7 @@ class BatchEffectTrainer:
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
-        early_stop=False
+        early_stop=False, net_type='simple'
     ):
         '''
         in_features: the number of input features;
@@ -83,23 +83,37 @@ class BatchEffectTrainer:
                 'cls_weight and order_weight must not be all zero')
 
         # 得到3个模型
-        self.models = {
-            'encoder': SimpleCoder(
-                [in_features] + encoder_hiddens + [bottle_num], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                spectral_norm=spectral_norm
-            ).to(device),
-            'decoder': SimpleCoder(
-                [bottle_num] + decoder_hiddens + [in_features], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                spectral_norm=spectral_norm
-            ).to(device),
-            'discriminator': SimpleCoder(
-                [no_be_num] + disc_hiddens + [logit_dim], lrelu=False,
-                norm=nn.BatchNorm1d, last_act=None,
-                spectral_norm=spectral_norm, return_hidden=False
-            ).to(device)
-        }
+        if net_type == 'simple':
+            self.models = {
+                'encoder': SimpleCoder(
+                    [in_features] + encoder_hiddens + [bottle_num], lrelu=True,
+                    last_act=None, norm=nn.BatchNorm1d, dropout=None,
+                    spectral_norm=spectral_norm
+                ).to(device),
+                'decoder': SimpleCoder(
+                    [bottle_num] + decoder_hiddens + [in_features], lrelu=True,
+                    last_act=None, norm=nn.BatchNorm1d, dropout=None,
+                    spectral_norm=spectral_norm
+                ).to(device),
+                'discriminator': SimpleCoder(
+                    [no_be_num] + disc_hiddens + [logit_dim], lrelu=False,
+                    norm=nn.BatchNorm1d, last_act=None,
+                    spectral_norm=spectral_norm, return_hidden=False
+                ).to(device)
+            }
+        elif net_type == 'resnet':
+            self.models = {
+                'encoder': ResBotNet(
+                    [in_features] + encoder_hiddens + [bottle_num], 50
+                ).to(device),
+                'decoder': ResBotNet(
+                    [bottle_num] + decoder_hiddens + [in_features], 50
+                ).to(device),
+                'discriminator': ResBotNet(
+                    [no_be_num] + disc_hiddens + [logit_dim], 50,
+                    return_hidden=False
+                ).to(device)
+            }
         self.num_encoder_layers = len(self.models['encoder'].layers)
 
         # 得到两个optim
@@ -400,7 +414,8 @@ def main():
         decoder_hiddens=config.args.ae_units,
         encoder_hiddens=config.args.ae_units,
         disc_hiddens=config.args.disc_units,
-        early_stop=config.args.early_stop
+        early_stop=config.args.early_stop,
+        net_type=config.args.net_type
     )
 
     best_models, hist = trainer.fit(datas)

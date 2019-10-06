@@ -72,6 +72,7 @@ class Config:
             help="if use, compute rank loss with batch"
         )
         self.parser.add_argument('--early_stop', action='store_true')
+        self.parser.add_argument('--net_type', default='simple')
 
         # 已经基本确定下来不动的
         self.parser.add_argument(
