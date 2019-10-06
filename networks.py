@@ -5,179 +5,129 @@ import torch.nn as nn
 ''' 网络结构部分 '''
 
 
-class ResBlock2(nn.Module):
-    def __init__(self, in_f, out_f, act, bottle_f, dropout=None):
-        super(ResBlock2, self).__init__()
-        self.f = nn.Sequential(
-            nn.BatchNorm1d(in_f), act, nn.Linear(in_f, bottle_f),
-            nn.BatchNorm1d(bottle_f), act, nn.Linear(bottle_f, out_f)
-        )
-        self.lin = nn.Linear(in_f, out_f)
-
-    def forward(self, x):
-        return self.f(x) + self.lin(x)
+RES_BLOCK1_BOTTLE_UNITS = None
 
 
-class ResNet2(nn.Module):
-    def __init__(self, units, return_hidden=True):
-        super(ResNet2, self).__init__()
-        self.layers = nn.ModuleList()
-        for i, (in_f, out_f) in enumerate(zip(units[:-1], units[1:])):
-            one_layer = [ResBlock2(in_f, out_f, nn.LeakyReLU(), int((in_f+out_f)/2))]
-            if i < len(units) - 2:
-                one_layer.append(nn.LeakyReLU())
-            self.layers.append(nn.Sequential(*one_layer))
-        self.return_hidden = return_hidden
+class ResBlock(nn.Module):
+    """
+    ResBlock
 
-    def forward(self, x):
-        layers_out = []
-        for layer in self.layers:
-            x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
-
-
-def bottle_linear(in_f, out_f, bottle_f, act=nn.LeakyReLU(), dropout=0.0):
-    ''' in_f-bottle_f --> act --> dropout --> bottle_f-out_f '''
-    return nn.Sequential(
-        nn.Linear(in_f, bottle_f), act, nn.Dropout(dropout, inplace=True),
-        nn.Linear(bottle_f, out_f)
-    )
-
-
-class ResBotBlock(nn.Module):
-    '''
-    x --> (bottle_neck_layer --> act)*(n-1) --> bottle_neck_layer --> +x --> bn
-    '''
+    net_type 1:
+    x(in_f) --[act--linear--BN]--> h(bottle_units[1]) \
+        --[act--linear--BN]--> h(bottle_units[2]) ...\
+        -->  +x(out_f)
+    net_type 2:
+    x(in_f) --[BN--act--linear]--> h(bottle_units[1]) \
+        --[BN--act--linear]--> h(bottle_units[2]) ...\
+        -->  +x(out_f)
+    """
     def __init__(
-        self, in_f, out_f, act, bottle_units, bottle_act=None, dropout=0.5
+        self, in_f, out_f, act, bottle_units=None, bottle_act=None,
+        net_type=1
     ):
-        super(ResBotBlock, self).__init__()
-        if not isinstance(bottle_units, (tuple, list)):
+        """
+
+        :param in_f:
+        :param out_f:
+        :param act:
+        :param bottle_units:
+        :param bottle_act:
+        :param dropout:
+        """
+        super(ResBlock, self).__init__()
+        # 瓶颈层的节点数
+        if bottle_units is None:
+            bottle_units = [int((in_f + out_f) / 2)] * 2
+        elif isinstance(bottle_units, int):
             bottle_units = [bottle_units]
-        inter_f = out_f if len(bottle_units) == 1 else int((in_f + out_f) / 2)
+        elif not isinstance(bottle_units, (tuple, list)):
+            raise ValueError
+        # 如果不设置瓶颈层的激活函数，则使用act
         if bottle_act is None:
             bottle_act = act
-        self.bottle_modules = []
-        for i, bu in enumerate(bottle_units):
-            if i == 0:
-                self.bottle_modules.append(
-                    bottle_linear(in_f, inter_f, bu, bottle_act, dropout))
-            elif i == len(bottle_units) - 1:
-                self.bottle_modules.append(
-                    bottle_linear(inter_f, out_f, bu, bottle_act, dropout))
-            else:
-                self.bottle_modules.append(
-                    bottle_linear(inter_f, inter_f, bu, bottle_act, dropout))
-            if i != (len(bottle_units) - 1):
-                self.bottle_modules.append(act)
-        self.bottle_modules = nn.Sequential(*self.bottle_modules)
-        self.bn = nn.BatchNorm1d(out_f)
+        # 决定使用的block的类型
+        block = self.bottle1 if net_type == 1 else self.bottle2
+        # 记录所有的modules
+        self.model = []
+        units = [in_f] + list(bottle_units) + [out_f]
+        for i, j in zip(units[:-1], units[1:]):
+            self.model.append(block(i, j, act))
+        self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
-        identity = x
-        out = self.bottle_modules(x)
-        out += identity
-        return self.bn(out)
+        out = self.model(x)
+        
+        in_shape, out_shape = x.size(1), out.size(1)
+        if in_shape > out_shape:
+            x = x[:, :out_shape]
+        elif in_shape < out_shape:
+            zero_tensor = torch.zeros((x.size(0), out_shape-in_shape))
+            zero_tensor = zero_tensor.to(x)
+            x = torch.cat([x, zero_tensor], dim=1)
+        return x + out
+
+    @staticmethod
+    def bottle1(in_f, out_f, act=nn.LeakyReLU()):
+        return nn.Sequential(
+            act, nn.Linear(in_f, out_f), nn.BatchNorm1d(out_f))
+
+    @staticmethod
+    def bottle2(in_f, out_f, act=nn.LeakyReLU()):
+        return nn.Sequential(
+            nn.BatchNorm1d(in_f), act, nn.Linear(in_f, out_f))
 
 
-class ResBotNet(nn.Module):
-    def __init__(self, units, bottle_unit=50, dropout=0.0, return_hidden=True):
-        super(ResBotNet, self).__init__()
-        in_f = units[0]
-        out_f = units[-1]
-        act = nn.LeakyReLU()
-        bottle_units = [bottle_unit] * 2
+class ResNet(nn.Module):
+    """
+    ResNet
+    x --ResBlock--> h --ResBlock--> ... --ResBlock--> h --linear--> out
+    """
+    def __init__(
+        self, units, bottle_units=None, act=nn.LeakyReLU(), net_type=1
+    ):
+        super(ResNet, self).__init__()
+        # 创建module list来保存所有的block或layers
         self.layers = nn.ModuleList()
-        self.layers.append(nn.Sequential(nn.Linear(in_f, units[1]), act))
-        for i, j in zip(units[1:-2], units[2:-1]):
-            one_layer = [
-                ResBotBlock(i, j, act, bottle_units, dropout=dropout),
-                act
-            ]
-            self.layers.append(nn.Sequential(*one_layer))
-        self.layers.append(nn.Sequential(nn.Linear(units[-2], out_f)))
-        self.return_hidden = return_hidden
+        # 因为上面的res block支持不同in和out的维度可以不同，所以就
+        #   直接使用units就可以了，但把最后一层空出来
+        for i, j in zip(units[:-2], units[1:-1]):
+            self.layers.append(
+                ResBlock(i, j, act, bottle_units, net_type=net_type)
+            )
+        # 最后一层，输出层，可以改变维度
+        self.layers.append(nn.Sequential(nn.Linear(units[-2], units[-1])))
 
     def forward(self, x):
-        layers_out = []
         for layer in self.layers:
             x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
-
-    def reset_parameters(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                m.reset_parameters()
+        return x
 
 
 class SimpleCoder(nn.Module):
-    def __init__(
-        self, units, dropout=None, norm=None, lrelu=True, last_act=None,
-        spectral_norm=False, return_hidden=True
-    ):
+    def __init__(self, units, act=nn.LeakyReLU()):
         '''
         构建多层全连接
 
         args:
             units: list，表示每一次的节点数，注意，第一个元素是输入层，最后一个
                 元素是输出层，其他是隐藏层；
-            dropout: None or float or list of float，如果是float需要在0-1之间，
-                表示是否在每个linear后加dropout，如果是None则不加，float这
-                表示dropout的rate， 每个linear后的dropout都是一样的，如果是list
-                则表示每一个隐层中的dropout rate,注意到，最后一个hidden layer和
-                output layer间不会加入dropout；
-            norm: None or nn.BatchNorm1d，在每一层linear后，relu前加入BN，如果
-                是None则没有，最后的hidden layer和output layer间不会加入；
-            lrelu: Boolean，True则每一层激活函数为leaky relu, False则使用relu，
-                这不会决定output的激活函数;
-            last_act: None or activitiy modules, 如果是None则output没有激活函数，
-                不然则使用这个module作为output layer的激活函数；
-            spectral_norm: Boolean，如果是True，则每个linear module是被谱归一化
-                的，False则没有；
-            return_hidden: Boolean，如果是True则forward返回每个hidden layers和
-                output layer的输出，如果是False则只返回output layer的输出；
         '''
         super(SimpleCoder, self).__init__()
-        self.return_hidden = return_hidden
         self.layers = nn.ModuleList()
         for i, (u1, u2) in enumerate(zip(units[:-1], units[1:])):
             one_layer = []
             linear_layer = nn.Linear(u1, u2)
-            if spectral_norm:
-                linear_layer = nn.utils.spectral_norm(linear_layer)
             one_layer.append(linear_layer)
             if i < (len(units) - 2):  # 因为units是包括了输入层的
-                one_layer.append(nn.LeakyReLU() if lrelu else nn.ReLU())
-                if norm is not None:
-                    one_layer.append(norm(u2))
-                # dropout可以是None(没有dropout)，也可以是float(除了最后一
-                # 层，其他层都加这个dropout)，也可以是list(表示第几层指定的
-                # dropout是多少，None表示这一层不加)
-                if isinstance(dropout, float):
-                    one_layer.append(nn.Dropout(dropout))
-                elif isinstance(dropout, (list, tuple)):
-                    dropout_i = dropout[i]
-                    one_layer.append(nn.Dropout(dropout_i))
-            else:
-                if last_act is not None:
-                    one_layer.append(last_act)
+                one_layer.append(act)
+                one_layer.append(nn.BatchNorm1d(u2))
             one_layer = nn.Sequential(*one_layer)
             self.layers.append(one_layer)
 
     def forward(self, x):
-        layers_out = []
         for layer in self.layers:
             x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
+        return x
 
 
 ''' Loss '''

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, ClsOrderLoss, ResBotNet, ResNet2
+from networks import SimpleCoder, ClsOrderLoss, ResNet
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -33,7 +33,7 @@ class BatchEffectTrainer:
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
-        early_stop=False, net_type='simple'
+        early_stop=False, net_type='simple', resnet_bottle_num=50
     ):
         '''
         in_features: the number of input features;
@@ -68,9 +68,12 @@ class BatchEffectTrainer:
         self.cls_weight, self.order_weight = cls_order_weight
         self.criterions = {
             'reconstruction': nn.MSELoss(),
-            'adversarial': ClsOrderLoss(
+            'adversarial_train': ClsOrderLoss(
+                int(self.cls_weight != 0), int(self.order_weight != 0),
+                cls_leastsquare, order_leastsquare, label_smooth),
+            'adversarial_ae': ClsOrderLoss(
                 self.cls_weight, self.order_weight, cls_leastsquare,
-                order_leastsquare, label_smooth)
+                order_leastsquare, label_smooth),
         }
         # according to cls_order_weight, choose classification criterion
         if self.cls_weight > 0.0 and self.order_weight > 0.0:
@@ -87,47 +90,28 @@ class BatchEffectTrainer:
         if net_type == 'simple':
             self.models = {
                 'encoder': SimpleCoder(
-                    [in_features] + encoder_hiddens + [bottle_num], lrelu=True,
-                    last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                    spectral_norm=spectral_norm
-                ).to(device),
+                    [in_features] + encoder_hiddens + [bottle_num]).to(device),
                 'decoder': SimpleCoder(
-                    [bottle_num] + decoder_hiddens + [in_features], lrelu=True,
-                    last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                    spectral_norm=spectral_norm
-                ).to(device),
+                    [bottle_num] + decoder_hiddens + [in_features]).to(device),
                 'discriminator': SimpleCoder(
-                    [no_be_num] + disc_hiddens + [logit_dim], lrelu=False,
-                    norm=nn.BatchNorm1d, last_act=None,
-                    spectral_norm=spectral_norm, return_hidden=False
-                ).to(device)
+                    [no_be_num] + disc_hiddens + [logit_dim]).to(device)
             }
-        elif net_type == 'resnet1':
+        else:
+            nt = 1 if net_type == 'resnet1' else 2
             self.models = {
-                'encoder': ResBotNet(
-                    [in_features] + encoder_hiddens + [bottle_num], 50
+                'encoder': ResNet(
+                    [in_features] + encoder_hiddens + [bottle_num],
+                    resnet_bottle_num, net_type=nt
                 ).to(device),
                 'decoder': ResBotNet(
-                    [bottle_num] + decoder_hiddens + [in_features], 50
+                    [bottle_num] + decoder_hiddens + [in_features],
+                    resnet_bottle_num, net_type=nt
                 ).to(device),
                 'discriminator': ResBotNet(
-                    [no_be_num] + disc_hiddens + [logit_dim], 50,
-                    return_hidden=False
-                ).to(device)
-            }
-        elif net_type == 'resnet2':
-            self.models = {
-                'encoder': ResNet2([in_features] + encoder_hiddens + [bottle_num]
-                                   ).to(device),
-                'decoder': ResNet2([bottle_num] + decoder_hiddens + [in_features]
-                ).to(device),
-                'discriminator': ResNet2(
                     [no_be_num] + disc_hiddens + [logit_dim],
-                    return_hidden=False
+                    resnet_bottle_num, net_type=nt
                 ).to(device)
             }
-
-        self.num_encoder_layers = len(self.models['encoder'].layers)
 
         # 得到两个optim
         if not isinstance(lrs, (tuple, list)):
@@ -155,11 +139,10 @@ class BatchEffectTrainer:
         }
 
         # 初始化结果记录
-        self.history = {('recon%d_loss' % i): []
-                        for i in range(self.num_encoder_layers)}
-        self.history.update({
-            'discriminate_loss_train': [], 'discriminate_loss_fixed': []
-        })
+        self.history = {
+            'discriminate_loss_train': [], 'discriminate_loss_fixed': [],
+            'reconstruction_loss': [], 'qc_loss': [], 'qc_distance': []
+        }
 
         # 属性化
         self.epoch = epoch
@@ -204,8 +187,7 @@ class BatchEffectTrainer:
             # 实例化3个loss对象，用于计算epoch loss
             ad_loss_train_obj = mm.Loss()
             ad_loss_fixed_obj = mm.Loss()
-            recon_loss_objs = [mm.Loss() for _ in
-                               range(self.num_encoder_layers)]
+            recon_loss_obj = mm.Loss()
             # 训练时需要将模型更改至训练状态
             for model in self.models.values():
                 model.train()
@@ -219,13 +201,12 @@ class BatchEffectTrainer:
                     ad_loss_train = self._forward_discriminate(
                         batch_x, batch_y)
                 for _ in range(self.autoencode_train_num):
-                    recon_losses, ad_loss_fixed = self._forward_autoencode(
+                    recon_loss, ad_loss_fixed = self._forward_autoencode(
                         batch_x, batch_y)
                 # 记录loss(这样，就算update了多次loss，也只记录最后一次)
                 ad_loss_train_obj.add(ad_loss_train, batch_x.size(0))
                 ad_loss_fixed_obj.add(ad_loss_fixed, batch_x.size(0))
-                for rl_loss, rl in zip(recon_loss_objs, recon_losses):
-                    rl_loss.add(rl, batch_x.size(0))
+                recon_loss_obj.add(recon_loss, batch_x.size(0))
             # 看warning说需要把scheduler的step放在optimizer.step之后使用
             for sche in self.scheduals.values():
                 sche.step()
@@ -235,9 +216,7 @@ class BatchEffectTrainer:
                 ad_loss_train_obj.value())
             self.history['discriminate_loss_fixed'].append(
                 ad_loss_fixed_obj.value())
-            for i in range(self.num_encoder_layers):
-                self.history['recon%d_loss' % i].append(
-                    recon_loss_objs[i].value())
+            self.history['reconstruction_loss'].append(recon_loss_obj.value())
             # 可视化epoch loss
             # 因为两组loss的取值范围相差太大，所以分开来显示
             self.visobj.add_epoch_loss(
@@ -245,9 +224,10 @@ class BatchEffectTrainer:
                 disc_train=self.history['discriminate_loss_train'][-1],
                 disc_fixed=self.history['discriminate_loss_fixed'][-1],
             )
-            recon_kwargs = {k: v[-1] for k, v in self.history.items()
-                            if k.startswith('recon')}
-            self.visobj.add_epoch_loss(winname='recon_losses', **recon_kwargs)
+            self.visobj.add_epoch_loss(
+                winname='recon_losses',
+                recon_loss=self.history['reconstruction_loss'][-1]
+            )
 
             ## valid phase
 
@@ -268,24 +248,23 @@ class BatchEffectTrainer:
 
             ## early stopping
             qc_dist = mm.mean_distance(qc_pca['recons_no_batch'])
+            self.history['qc_loss'].append(qc_loss)
+            self.history['qc_distance'].append(qc_dist)
             self.visobj.add_epoch_loss(
                 winname='qc_loss', qc_loss=qc_loss)
             self.visobj.add_epoch_loss(
                 winname='qc_distance', qc_dist=qc_dist
             )
-            if e > 200 and self.early_stop:
+            if e >= self.epoch-50 and self.early_stop:
                 early_stop_index = self.early_stop(e, qc_dist, qc_loss)
-                if early_stop_index:
-                    print('')
-                    print('Now model training is early stopped.')
-                    print('The best epoch is %d' %
-                        self.early_stop_objs['best_epoch'])
-                    print('The best qc loss is %.4f' %
-                        self.early_stop_objs['best_qc_loss'])
-                    print('The best qc distance is %.4f' %
-                        self.early_stop_objs['best_qc_distance'])
-                    break
         if self.early_stop:
+            print('')
+            print('The best epoch is %d' %
+                self.early_stop_objs['best_epoch'])
+            print('The best qc loss is %.4f' %
+                self.early_stop_objs['best_qc_loss'])
+            print('The best qc distance is %.4f' %
+                self.early_stop_objs['best_qc_distance'])
             for k, v in self.models.items():
                 v.load_state_dict(self.early_stop_objs['best_models'][k])
             self.models.update(self.early_stop_objs)
@@ -307,8 +286,8 @@ class BatchEffectTrainer:
         else:
             self.early_stop_objs['index'] += 1
 
-        if self.early_stop_objs['index'] > 200:
-            return True
+        #  if self.early_stop_objs['index'] > 200:
+            #  return True
         return False
 
     def _forward_autoencode(self, batch_x, batch_y):
@@ -316,24 +295,15 @@ class BatchEffectTrainer:
         with torch.enable_grad():
             # encoder
             encoder_hiddens = self.models['encoder'](batch_x)
-            hidden = encoder_hiddens[-1]
+            hidden = encoder_hiddens
             # decoder
-            if self.train_with_qc:
-                hidden_mask = torch.ones_like(hidden)
-                hidden_mask[batch_y[:, 3] == 0, :self.no_be_num] = 0
-                decoder_hiddens = self.models['decoder'](hidden)
-            else:
-                decoder_hiddens = self.models['decoder'](hidden)
-            batch_x_recon = decoder_hiddens[-1]
+            decoder_hiddens = self.models['decoder'](hidden)
+            batch_x_recon = decoder_hiddens
             # discriminator, but not training
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             # reconstruction losses
-            recon_losses = [
-                self.criterions['reconstruction'](batch_x_recon, batch_x)]
-            for i in range(len(encoder_hiddens)-1):
-                recon_loss1 = self.criterions['reconstruction'](
-                    encoder_hiddens[i], decoder_hiddens[-i-2])
-                recon_losses.append(recon_loss1)
+            recon_loss = self.criterions['reconstruction'](
+                batch_x_recon, batch_x)
             # discriminator loss
             ad_loss_args = [None] * 5
             if self.cls_weight > 0.0:
@@ -344,10 +314,9 @@ class BatchEffectTrainer:
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
-            adversarial_loss = self.criterions['adversarial'](*ad_loss_args)
+            adversarial_loss = self.criterions['adversarial_ae'](*ad_loss_args)
             # 组合这些loss来得到最终计算梯度使用的loss
             # 分类做的不好，说明这些维度中没有批次的信息，批次的信息都在后面的维度中
-            recon_loss = recon_losses[0]
             all_loss = self.ae_weight * recon_loss - \
                 self.disc_weight * adversarial_loss
         all_loss.backward()
@@ -359,12 +328,12 @@ class BatchEffectTrainer:
                 ), max_norm=1
             )
         self.optimizers['autoencode'].step()
-        return recon_losses, adversarial_loss
+        return recon_loss, adversarial_loss
 
     def _forward_discriminate(self, batch_x, batch_y):
         ''' discriminator进行训练的部分 '''
         with torch.no_grad():
-            hidden = self.models['encoder'](batch_x)[-1]
+            hidden = self.models['encoder'](batch_x)
         with torch.enable_grad():
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             ad_loss_args = [None] * 5
@@ -376,7 +345,8 @@ class BatchEffectTrainer:
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
-            adversarial_loss = self.criterions['adversarial'](*ad_loss_args)
+            adversarial_loss = self.criterions['adversarial_train'](
+                *ad_loss_args)
         adversarial_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -428,7 +398,8 @@ def main():
         encoder_hiddens=config.args.ae_units,
         disc_hiddens=config.args.disc_units,
         early_stop=config.args.early_stop,
-        net_type=config.args.net_type
+        net_type=config.args.net_type,
+        resnet_bottle_num=config.args.resnet_bottle_num
     )
 
     best_models, hist = trainer.fit(datas)
