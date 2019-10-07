@@ -47,7 +47,7 @@ class ResBlock(nn.Module):
 
     def forward(self, x):
         out = self.bottle_modules(x)
-        in_shape, out_shape = x.size(1), out.shape(1)
+        in_shape, out_shape = x.size(1), out.size(1)
         if in_shape == out_shape:
             return self.bn(x + out)
         elif in_shape > out_shape:
@@ -69,7 +69,7 @@ class ResBlock(nn.Module):
 
 class ResNet(nn.Module):
     def __init__(self, units, bottle_units=(50, 50), dropout=0.0):
-        super(ResBotNet, self).__init__()
+        super(ResNet, self).__init__()
         in_f, out_f, act = units[0], units[-1], nn.LeakyReLU()
         # 开始搭建网络
         self.layers = nn.ModuleList()
@@ -97,67 +97,30 @@ class ResNet(nn.Module):
 
 
 class SimpleCoder(nn.Module):
-    def __init__(
-        self, units, dropout=None, norm=None, lrelu=True, last_act=None,
-        spectral_norm=False, return_hidden=True
-    ):
+    def __init__(self, units, act=nn.LeakyReLU()):
         '''
         构建多层全连接
 
         args:
             units: list，表示每一次的节点数，注意，第一个元素是输入层，最后一个
                 元素是输出层，其他是隐藏层；
-            dropout: None or float or list of float，如果是float需要在0-1之间，
-                表示是否在每个linear后加dropout，如果是None则不加，float这
-                表示dropout的rate， 每个linear后的dropout都是一样的，如果是list
-                则表示每一个隐层中的dropout rate,注意到，最后一个hidden layer和
-                output layer间不会加入dropout；
-            norm: None or nn.BatchNorm1d，在每一层linear后，relu前加入BN，如果
-                是None则没有，最后的hidden layer和output layer间不会加入；
-            lrelu: Boolean，True则每一层激活函数为leaky relu, False则使用relu，
-                这不会决定output的激活函数;
-            last_act: None or activitiy modules, 如果是None则output没有激活函数，
-                不然则使用这个module作为output layer的激活函数；
-            spectral_norm: Boolean，如果是True，则每个linear module是被谱归一化
-                的，False则没有；
-            return_hidden: Boolean，如果是True则forward返回每个hidden layers和
-                output layer的输出，如果是False则只返回output layer的输出；
         '''
         super(SimpleCoder, self).__init__()
-        self.return_hidden = return_hidden
         self.layers = nn.ModuleList()
         for i, (u1, u2) in enumerate(zip(units[:-1], units[1:])):
             one_layer = []
             linear_layer = nn.Linear(u1, u2)
-            if spectral_norm:
-                linear_layer = nn.utils.spectral_norm(linear_layer)
             one_layer.append(linear_layer)
             if i < (len(units) - 2):  # 因为units是包括了输入层的
-                one_layer.append(nn.LeakyReLU() if lrelu else nn.ReLU())
-                if norm is not None:
-                    one_layer.append(norm(u2))
-                # dropout可以是None(没有dropout)，也可以是float(除了最后一
-                # 层，其他层都加这个dropout)，也可以是list(表示第几层指定的
-                # dropout是多少，None表示这一层不加)
-                if isinstance(dropout, float):
-                    one_layer.append(nn.Dropout(dropout))
-                elif isinstance(dropout, (list, tuple)):
-                    dropout_i = dropout[i]
-                    one_layer.append(nn.Dropout(dropout_i))
-            else:
-                if last_act is not None:
-                    one_layer.append(last_act)
+                one_layer.append(act)
+                one_layer.append(nn.BatchNorm1d(u2))
             one_layer = nn.Sequential(*one_layer)
             self.layers.append(one_layer)
 
     def forward(self, x):
-        layers_out = []
         for layer in self.layers:
             x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
+        return x
 
 
 ''' Loss '''

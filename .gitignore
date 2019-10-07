@@ -1,0 +1,5 @@
+DATA/
+RESULTS/
+__pycache__/
+.*
+!.gitignore
