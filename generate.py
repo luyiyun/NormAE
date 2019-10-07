@@ -54,15 +54,15 @@ def generate(
             ys.append(batch_y)
             # 计算hidden codes
             batch_x = batch_x.to(device, torch.float)
-            hidden = models['encoder'](batch_x)[-1]
+            hidden = models['encoder'](batch_x)
             codes.append(hidden)
             # AE重建
-            x_recon_be.append(models['decoder'](hidden)[-1])
+            x_recon_be.append(models['decoder'](hidden))
             # 去除批次重建
             hidden_copy = hidden.clone()
             # hidden_copy[:, no_be_num:] = hidden_copy[:, no_be_num:].mean(dim=0)
             hidden_copy[:, no_be_num:] = 0
-            x_recon.append(models['decoder'](hidden_copy)[-1])
+            x_recon.append(models['decoder'](hidden_copy))
             # 是否计算qc的loss，在训练的时候有用
             if compute_qc_loss:
                 qc_index = batch_y[:, -1] == 0.
@@ -134,7 +134,7 @@ def generate(
         with torch.no_grad():
             for hidden, in iterator:
                 hidden = hidden.to(device, torch.float)
-                batch_x_recon = models['decoder'](hidden)[-1]
+                batch_x_recon = models['decoder'](hidden)
                 x_recon_ica.append(batch_x_recon)
         res['recons_no_batch_ica'] = pd.DataFrame(
             torch.cat(x_recon_ica).detach().cpu().numpy(),

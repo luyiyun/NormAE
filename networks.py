@@ -23,18 +23,12 @@ class ResBlock(nn.Module):
     """
     def __init__(
         self, in_f, out_f, act, bottle_units=None, bottle_act=None,
-        net_type=1
+        net_type=1, bn=True, spectral_norm=False
     ):
-        """
-
-        :param in_f:
-        :param out_f:
-        :param act:
-        :param bottle_units:
-        :param bottle_act:
-        :param dropout:
-        """
         super(ResBlock, self).__init__()
+        self.bn = bn
+        self.spectral_norm = spectral_norm
+        self.net_type = net_type
         # 瓶颈层的节点数
         if bottle_units is None:
             bottle_units = [int((in_f + out_f) / 2)] * 2
@@ -45,13 +39,11 @@ class ResBlock(nn.Module):
         # 如果不设置瓶颈层的激活函数，则使用act
         if bottle_act is None:
             bottle_act = act
-        # 决定使用的block的类型
-        block = self.bottle1 if net_type == 1 else self.bottle2
         # 记录所有的modules
         self.model = []
         units = [in_f] + list(bottle_units) + [out_f]
         for i, j in zip(units[:-1], units[1:]):
-            self.model.append(block(i, j, act))
+            self.model.append(self.bottle(i, j, act))
         self.model = nn.Sequential(*self.model)
 
     def forward(self, x):
@@ -66,15 +58,17 @@ class ResBlock(nn.Module):
             x = torch.cat([x, zero_tensor], dim=1)
         return x + out
 
-    @staticmethod
-    def bottle1(in_f, out_f, act=nn.LeakyReLU()):
-        return nn.Sequential(
-            act, nn.Linear(in_f, out_f), nn.BatchNorm1d(out_f))
-
-    @staticmethod
-    def bottle2(in_f, out_f, act=nn.LeakyReLU()):
-        return nn.Sequential(
-            nn.BatchNorm1d(in_f), act, nn.Linear(in_f, out_f))
+    def bottle(self, in_f, out_f, act=nn.LeakyReLU()):
+        layers = [act]
+        lin = nn.utils.spectral_norm(nn.Linear(in_f, out_f)) \
+            if self.spectral_norm else nn.Linear(in_f, out_f)
+        layers.append(lin)
+        if self.bn:
+            if self.net_type == 1:
+                layers.append(nn.BatchNorm1d(out_f))
+            else:
+                layers.insert(0, nn.BatchNorm1d(in_f))
+        return nn.Sequential(*layers)
 
 
 class ResNet(nn.Module):
@@ -83,16 +77,20 @@ class ResNet(nn.Module):
     x --ResBlock--> h --ResBlock--> ... --ResBlock--> h --linear--> out
     """
     def __init__(
-        self, units, bottle_units=None, act=nn.LeakyReLU(), net_type=1
+        self, units, bottle_units=None, act=nn.LeakyReLU(), net_type=1,
+        bn=True, spectral_norm=False
     ):
         super(ResNet, self).__init__()
         # 创建module list来保存所有的block或layers
         self.layers = nn.ModuleList()
+        # first is linear
+        self.layers.append(nn.Linear(units[0], units[1]))
         # 因为上面的res block支持不同in和out的维度可以不同，所以就
         #   直接使用units就可以了，但把最后一层空出来
-        for i, j in zip(units[:-2], units[1:-1]):
+        for i, j in zip(units[1:-2], units[2:-1]):
             self.layers.append(
-                ResBlock(i, j, act, bottle_units, net_type=net_type)
+                ResBlock(i, j, act, bottle_units, net_type=net_type,
+                         bn=bn, spectral_norm=spectral_norm)
             )
         # 最后一层，输出层，可以改变维度
         self.layers.append(nn.Sequential(nn.Linear(units[-2], units[-1])))

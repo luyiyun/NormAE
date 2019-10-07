@@ -101,15 +101,15 @@ class BatchEffectTrainer:
             self.models = {
                 'encoder': ResNet(
                     [in_features] + encoder_hiddens + [bottle_num],
-                    resnet_bottle_num, net_type=nt
+                    resnet_bottle_num, net_type=nt, bn=True, spectral_norm=False
                 ).to(device),
-                'decoder': ResBotNet(
+                'decoder': ResNet(
                     [bottle_num] + decoder_hiddens + [in_features],
-                    resnet_bottle_num, net_type=nt
+                    resnet_bottle_num, net_type=nt, bn=True, spectral_norm=False
                 ).to(device),
-                'discriminator': ResBotNet(
+                'discriminator': ResNet(
                     [no_be_num] + disc_hiddens + [logit_dim],
-                    resnet_bottle_num, net_type=nt
+                    resnet_bottle_num, net_type=nt, bn=True, spectral_norm=False
                 ).to(device)
             }
 
@@ -255,8 +255,8 @@ class BatchEffectTrainer:
             self.visobj.add_epoch_loss(
                 winname='qc_distance', qc_dist=qc_dist
             )
-            if e >= self.epoch-50 and self.early_stop:
-                early_stop_index = self.early_stop(e, qc_dist, qc_loss)
+            if self.early_stop and e >= self.epoch - 100:
+                early_stop_index = self.check_qc(e, qc_dist, qc_loss)
         if self.early_stop:
             print('')
             print('The best epoch is %d' %
@@ -271,7 +271,7 @@ class BatchEffectTrainer:
 
         return self.models, self.history
 
-    def early_stop(self, e, qc_dist, qc_loss):
+    def check_qc(self, e, qc_dist, qc_loss):
         early_stop_score = qc_dist + qc_loss * 100
         if early_stop_score < self.early_stop_objs['best_score']:
             self.early_stop_objs['best_epoch'] = e
