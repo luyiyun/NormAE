@@ -5,110 +5,90 @@ import torch.nn as nn
 ''' 网络结构部分 '''
 
 
-class ResBlock2(nn.Module):
-    def __init__(self, in_f, out_f, act, bottle_f, dropout=None):
-        super(ResBlock2, self).__init__()
-        self.f = nn.Sequential(
-            nn.BatchNorm1d(in_f), act, nn.Linear(in_f, bottle_f),
-            nn.BatchNorm1d(bottle_f), act, nn.Linear(bottle_f, out_f)
-        )
-        self.lin = nn.Linear(in_f, out_f)
-
-    def forward(self, x):
-        return self.f(x) + self.lin(x)
-
-
-class ResNet2(nn.Module):
-    def __init__(self, units, return_hidden=True):
-        super(ResNet2, self).__init__()
-        self.layers = nn.ModuleList()
-        for i, (in_f, out_f) in enumerate(zip(units[:-1], units[1:])):
-            one_layer = [ResBlock2(in_f, out_f, nn.LeakyReLU(), int((in_f+out_f)/2))]
-            if i < len(units) - 2:
-                one_layer.append(nn.LeakyReLU())
-            self.layers.append(nn.Sequential(*one_layer))
-        self.return_hidden = return_hidden
-
-    def forward(self, x):
-        layers_out = []
-        for layer in self.layers:
-            x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
-
-
-def bottle_linear(in_f, out_f, bottle_f, act=nn.LeakyReLU(), dropout=0.0):
-    ''' in_f-bottle_f --> act --> dropout --> bottle_f-out_f '''
-    return nn.Sequential(
-        nn.Linear(in_f, bottle_f), act, nn.Dropout(dropout, inplace=True),
-        nn.Linear(bottle_f, out_f)
-    )
-
-
-class ResBotBlock(nn.Module):
+class ResBlock(nn.Module):
     '''
-    x --> (bottle_neck_layer --> act)*(n-1) --> bottle_neck_layer --> +x --> bn
+    x(in_f) --bottle_linear--> h(inter_f) --bottle_linear--> h(inter_f) \
+        ... --bottle_linear--> out(out_f)+x(in_f) --bn--> <return>
     '''
     def __init__(
-        self, in_f, out_f, act, bottle_units, bottle_act=None, dropout=0.5
+        self, in_f, out_f, act, bottle_units, bottle_act=None, dropout=0.0
     ):
-        super(ResBotBlock, self).__init__()
-        if not isinstance(bottle_units, (tuple, list)):
+        super(ResBlock, self).__init__()
+        # 保存属性
+        self.act = act
+        self.bottle_act = bottle_act if bottle_act is not None else act
+        self.dropout = dropout
+        # 对bottle_units进行处理
+        if isinstance(bottle_units, int):
             bottle_units = [bottle_units]
+        elif not isinstance(bottle_units, (tuple, list)):
+            raise ValueError
+        # 如果bottle neck只有一个，则只需要一层bottle_linear即可，所以
+        #   中间层就是输出层，如果还有其他的，则使用输入和输出的平均值
         inter_f = out_f if len(bottle_units) == 1 else int((in_f + out_f) / 2)
-        if bottle_act is None:
-            bottle_act = act
+        # 开始搭建网络结构
         self.bottle_modules = []
         for i, bu in enumerate(bottle_units):
+            # 除了最后一层，其他层后面都需要加上激活函数
+            if len(self.bottle_modules) > 0:
+                self.bottle_modules.append(self.act)
+            # 第一层和最后一层的输入和输出有所不同
             if i == 0:
                 self.bottle_modules.append(
-                    bottle_linear(in_f, inter_f, bu, bottle_act, dropout))
+                    self.bottle_linear(in_f, inter_f, bu))
             elif i == len(bottle_units) - 1:
                 self.bottle_modules.append(
-                    bottle_linear(inter_f, out_f, bu, bottle_act, dropout))
+                    self.bottle_linear(inter_f, out_f, bu))
             else:
                 self.bottle_modules.append(
-                    bottle_linear(inter_f, inter_f, bu, bottle_act, dropout))
-            if i != (len(bottle_units) - 1):
-                self.bottle_modules.append(act)
+                    self.bottle_linear(inter_f, inter_f, bu))
         self.bottle_modules = nn.Sequential(*self.bottle_modules)
         self.bn = nn.BatchNorm1d(out_f)
 
     def forward(self, x):
-        identity = x
         out = self.bottle_modules(x)
-        out += identity
-        return self.bn(out)
+        in_shape, out_shape = x.size(1), out.shape(1)
+        if in_shape == out_shape:
+            return self.bn(x + out)
+        elif in_shape > out_shape:
+            # 如果输出比较小，则只是用输入的一部分
+            return self.bn(x[:, :out_shape] + out)
+        # 如果输入比较小，则使用0来进行填补
+        zero_tensor = torch.zeros((x.size(0), out_shape-in_shape)).to(x)
+        x = torch.cat([x, zero_tensor], dim=1)
+        return self.bn(x + out)
+
+    def bottle_linear(self, in_f, out_f, bottle_f):
+        ''' in_f --linear--> bottle_f --> --act-dropout-linear--> out_f '''
+        return nn.Sequential(
+            nn.Linear(in_f, bottle_f), self.act,
+            nn.Dropout(self.dropout, inplace=True),
+            nn.Linear(bottle_f, out_f)
+        )
 
 
-class ResBotNet(nn.Module):
-    def __init__(self, units, bottle_unit=50, dropout=0.0, return_hidden=True):
+class ResNet(nn.Module):
+    def __init__(self, units, bottle_units=(50, 50), dropout=0.0):
         super(ResBotNet, self).__init__()
-        in_f = units[0]
-        out_f = units[-1]
-        act = nn.LeakyReLU()
-        bottle_units = [bottle_unit] * 2
+        in_f, out_f, act = units[0], units[-1], nn.LeakyReLU()
+        # 开始搭建网络
         self.layers = nn.ModuleList()
+        # 首先第一层，简单的fc，将维度映射下去
         self.layers.append(nn.Sequential(nn.Linear(in_f, units[1]), act))
+        # 中间的层，每一层是一个ResBlock，后面再接一个激活函数
         for i, j in zip(units[1:-2], units[2:-1]):
             one_layer = [
-                ResBotBlock(i, j, act, bottle_units, dropout=dropout),
+                ResBlock(i, j, act, bottle_units, dropout=dropout),
                 act
             ]
             self.layers.append(nn.Sequential(*one_layer))
+        # 最后一层，无激活函数的fc
         self.layers.append(nn.Sequential(nn.Linear(units[-2], out_f)))
-        self.return_hidden = return_hidden
 
     def forward(self, x):
-        layers_out = []
         for layer in self.layers:
             x = layer(x)
-            layers_out.append(x)
-        if self.return_hidden:
-            return layers_out
-        return layers_out[-1]
+        return x
 
     def reset_parameters(self):
         for m in self.modules():
