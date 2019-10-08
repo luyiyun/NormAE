@@ -406,7 +406,7 @@ def main():
         early_stop=config.args.early_stop,
         net_type=config.args.net_type,
         resnet_bottle_num=config.args.resnet_bottle_num,
-        optimizer=confi.args.optim
+        optimizer=config.args.optim
     )
 
     best_models, hist = trainer.fit(datas)
