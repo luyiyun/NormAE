@@ -33,7 +33,8 @@ class BatchEffectTrainer:
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
-        early_stop=False, net_type='simple', resnet_bottle_num=50
+        early_stop=False, net_type='simple', resnet_bottle_num=50,
+        optimizer='rmsprop'
     ):
         '''
         in_features: the number of input features;
@@ -115,15 +116,21 @@ class BatchEffectTrainer:
         # 得到两个optim
         if not isinstance(lrs, (tuple, list)):
             lrs = [lrs] * 2
+        if optimizer == 'rmsprop':
+            optimizer_obj = optim.RMSprop
+        elif optimizer == 'adam':
+            optimizer_obj = optim.Adam
+        else:
+            raise ValueError
         self.optimizers = {
-            'autoencode': optim.Adam(
+            'autoencode': optimizer_obj(
                 chain(
                     self.models['encoder'].parameters(),
                     self.models['decoder'].parameters()
                 ),
                 lr=lrs[0], weight_decay=l2
             ),
-            'discriminate': optim.Adam(
+            'discriminate': optimizer_obj(
                 self.models['discriminator'].parameters(), lr=lrs[1],
                 weight_decay=l2
             )
@@ -398,7 +405,8 @@ def main():
         disc_hiddens=config.args.disc_units,
         early_stop=config.args.early_stop,
         net_type=config.args.net_type,
-        resnet_bottle_num=config.args.resnet_bottle_num
+        resnet_bottle_num=config.args.resnet_bottle_num,
+        optimizer=confi.args.optim
     )
 
     best_models, hist = trainer.fit(datas)

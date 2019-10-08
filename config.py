@@ -75,6 +75,7 @@ class Config:
         self.parser.add_argument('--net_type', default='simple')
         self.parser.add_argument(
             '--resnet_bottle_num', default=[50, 50], type=int, nargs='+')
+        self.parser.add_argument('--optim', default='rmsprop')
 
         # 已经基本确定下来不动的
         self.parser.add_argument(

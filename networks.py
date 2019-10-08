@@ -84,6 +84,8 @@ class ResNet(nn.Module):
             self.layers.append(nn.Sequential(*one_layer))
         # 最后一层，无激活函数的fc
         self.layers.append(nn.Sequential(nn.Linear(units[-2], out_f)))
+        # 重新初始化参数
+        self.init_parameters(nn.init.normal_, std=0.02)
 
     def forward(self, x):
         for layer in self.layers:
@@ -94,6 +96,11 @@ class ResNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 m.reset_parameters()
+
+    def init_parameters(self, init, **init_params):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init(m.weight, **init_params)
 
 
 class SimpleCoder(nn.Module):
