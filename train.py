@@ -93,8 +93,7 @@ class BatchEffectTrainer:
                 'encoder': SimpleCoder(
                     [in_features] + encoder_hiddens + [bottle_num]).to(device),
                 'decoder': SimpleCoder(
-                    [bottle_num] + decoder_hiddens[::-1] +\
-                    [in_features]).to(device),
+                    [bottle_num] + decoder_hiddens + [in_features]).to(device),
                 'discriminator': SimpleCoder(
                     [no_be_num] + disc_hiddens + [logit_dim]).to(device)
             }
@@ -105,7 +104,7 @@ class BatchEffectTrainer:
                     resnet_bottle_num
                 ).to(device),
                 'decoder': ResNet(
-                    [bottle_num] + decoder_hiddens[::-1] + [in_features],
+                    [bottle_num] + decoder_hiddens + [in_features],
                     resnet_bottle_num
                 ).to(device),
                 'discriminator': ResNet(
@@ -303,11 +302,8 @@ class BatchEffectTrainer:
         with torch.enable_grad():
             # encoder
             if self.denoise is not None and self.denoise > 0.0:
-                noise = torch.randint(
-                    batch_x.size(1), size=batch_x.shape).to(batch_x)
-                batch_x_noise = noise > (batch_x.size(1) * self.denoise)
-                batch_x_noise = batch_x_noise.float()
-                batch_x_noise = batch_x * batch_x_noise
+                noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
+                batch_x_noise = batch_x + noise
             else:
                 batch_x_noise = batch_x
 
@@ -351,11 +347,8 @@ class BatchEffectTrainer:
         ''' discriminator进行训练的部分 '''
         with torch.no_grad():
             if self.denoise is not None and self.denoise > 0.0:
-                noise = torch.randint(
-                    batch_x.size(1), size=batch_x.shape).to(batch_x)
-                batch_x_noise = noise > (batch_x.size(1) * self.denoise)
-                batch_x_noise = batch_x_noise.float()
-                batch_x_noise = batch_x * batch_x_noise
+                noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
+                batch_x_noise = batch_x + noise
             else:
                 batch_x_noise = batch_x
 
@@ -421,7 +414,7 @@ def main():
         use_batch_for_order=config.args.use_batch_for_order,
         visdom_port=config.args.visdom_port,
         decoder_hiddens=config.args.ae_units,
-        encoder_hiddens=config.args.ae_units,
+        encoder_hiddens=config.args.ae_units[::-1],
         disc_hiddens=config.args.disc_units,
         early_stop=config.args.early_stop,
         net_type=config.args.net_type,

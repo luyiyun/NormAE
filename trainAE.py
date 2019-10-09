@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, SmoothCERankLoss
+from networks import SimpleCoder, ResNet
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -24,9 +24,10 @@ from generate import generate
 
 class AutoEncoderTrainer:
     def __init__(
-        self, in_features, bottle_num, lr=0.01, bs=64, nw=6, epoch=100,
-        device=torch.device('cuda:0'), schedual_stones=[2000],
-        train_with_qc=True
+        self, in_features, bottle_num, encoder_hiddens, decoder_hiddens,
+        lr=0.01, bs=64, nw=6, epoch=100, device=torch.device('cuda:0'),
+        schedual_stones=[2000], train_with_qc=True, net_type='simple',
+        denoise=0.0
     ):
         '''
         in_features: the number of input features;
@@ -42,22 +43,36 @@ class AutoEncoderTrainer:
             subject and qc;
         '''
 
-        self.models = {
-            'encoder': SimpleCoder(
-                [in_features, 300, 300, 300, bottle_num], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                return_hidden=False
-            ).to(device),
-            'decoder': SimpleCoder(
-                [bottle_num, 300, 300, 300, in_features], lrelu=True,
-                last_act=None, norm=nn.BatchNorm1d, dropout=None,
-                return_hidden=False
-            ).to(device)
-        }
+        # 得到3个模型
+        if net_type == 'simple':
+            self.models = {
+                'encoder': SimpleCoder(
+                    [in_features] + encoder_hiddens + [bottle_num]).to(device),
+                'decoder': SimpleCoder(
+                    [bottle_num] + decoder_hiddens + [in_features]).to(device),
+            }
+        else:
+            self.models = {
+                'encoder': ResNet(
+                    [in_features] + encoder_hiddens + [bottle_num],
+                    resnet_bottle_num
+                ).to(device),
+                'decoder': ResNet(
+                    [bottle_num] + decoder_hiddens + [in_features],
+                    resnet_bottle_num
+                ).to(device),
+            }
 
         self.criterion = nn.MSELoss()
 
-        self.optimizer = optim.Adam(chain(
+        if optimizer == 'rmsprop':
+            optimizer_obj = optim.RMSprop
+        elif optimizer == 'adam':
+            optimizer_obj = optim.Adam
+        else:
+            raise ValueError
+        self.optimizer = optimizer_obj(chain(
+            self.models['encoder'].parameters(),
             self.models['decoder'].parameters()
         ), lr=lr)
 
@@ -65,7 +80,7 @@ class AutoEncoderTrainer:
             self.optimizer, schedual_stones, gamma=0.1)
 
         # 初始化结果记录
-        self.history = {"recon_loss": []}
+        self.history = {"recon_loss": [], 'qc_loss': [], 'qc_distance': []}
 
         # 属性化
         self.epoch = epoch
@@ -73,6 +88,7 @@ class AutoEncoderTrainer:
         self.nw = nw
         self.train_with_qc = train_with_qc
         self.device = device
+        self.denoise = denoise
 
         # 可视化工具
         self.visobj = VisObj()
