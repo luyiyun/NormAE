@@ -76,6 +76,7 @@ class Config:
         self.parser.add_argument(
             '--resnet_bottle_num', default=[50, 50], type=int, nargs='+')
         self.parser.add_argument('--optim', default='rmsprop')
+        self.parser.add_argument('--denoise', default=0.0, type=float)
 
         # 已经基本确定下来不动的
         self.parser.add_argument(

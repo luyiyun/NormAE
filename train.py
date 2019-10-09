@@ -34,7 +34,7 @@ class BatchEffectTrainer:
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
         early_stop=False, net_type='simple', resnet_bottle_num=50,
-        optimizer='rmsprop'
+        optimizer='rmsprop', denoise=0.1
     ):
         '''
         in_features: the number of input features;
@@ -93,7 +93,8 @@ class BatchEffectTrainer:
                 'encoder': SimpleCoder(
                     [in_features] + encoder_hiddens + [bottle_num]).to(device),
                 'decoder': SimpleCoder(
-                    [bottle_num] + decoder_hiddens + [in_features]).to(device),
+                    [bottle_num] + decoder_hiddens[::-1] +\
+                    [in_features]).to(device),
                 'discriminator': SimpleCoder(
                     [no_be_num] + disc_hiddens + [logit_dim]).to(device)
             }
@@ -104,7 +105,7 @@ class BatchEffectTrainer:
                     resnet_bottle_num
                 ).to(device),
                 'decoder': ResNet(
-                    [bottle_num] + decoder_hiddens + [in_features],
+                    [bottle_num] + decoder_hiddens[::-1] + [in_features],
                     resnet_bottle_num
                 ).to(device),
                 'discriminator': ResNet(
@@ -163,6 +164,7 @@ class BatchEffectTrainer:
         self.train_with_qc = train_with_qc
         self.use_batch_for_order = use_batch_for_order
         self.early_stop = early_stop
+        self.denoise = denoise
 
         # 可视化工具
         self.visobj = VisObj(visdom_port)
@@ -300,7 +302,16 @@ class BatchEffectTrainer:
         ''' autoencode进行训练的部分 '''
         with torch.enable_grad():
             # encoder
-            encoder_hiddens = self.models['encoder'](batch_x)
+            if self.denoise is not None and self.denoise > 0.0:
+                noise = torch.randint(
+                    batch_x.size(1), size=batch_x.shape).to(batch_x)
+                batch_x_noise = noise > (batch_x.size(1) * self.denoise)
+                batch_x_noise = batch_x.noise.float()
+                batch_x_noise = batch_x * batch_x_noise
+            else:
+                batch_x_noise = batch_x
+
+            encoder_hiddens = self.models['encoder'](batch_x_noise)
             hidden = encoder_hiddens
             # decoder
             decoder_hiddens = self.models['decoder'](hidden)
@@ -339,7 +350,16 @@ class BatchEffectTrainer:
     def _forward_discriminate(self, batch_x, batch_y):
         ''' discriminator进行训练的部分 '''
         with torch.no_grad():
-            hidden = self.models['encoder'](batch_x)
+            if self.denoise is not None and self.denoise > 0.0:
+                noise = torch.randint(
+                    batch_x.size(1), size=batch_x.shape).to(batch_x)
+                batch_x_noise = noise > (batch_x.size(1) * self.denoise)
+                batch_x_noise = batch_x.noise.float()
+                batch_x_noise = batch_x * batch_x_noise
+            else:
+                batch_x_noise = batch_x
+
+            hidden = self.models['encoder'](batch_x_noise)
         with torch.enable_grad():
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             ad_loss_args = [None] * 5
@@ -406,7 +426,8 @@ def main():
         early_stop=config.args.early_stop,
         net_type=config.args.net_type,
         resnet_bottle_num=config.args.resnet_bottle_num,
-        optimizer=config.args.optim
+        optimizer=config.args.optim,
+        denoise=config.args.denoise
     )
 
     best_models, hist = trainer.fit(datas)
