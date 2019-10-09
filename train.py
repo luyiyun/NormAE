@@ -306,7 +306,7 @@ class BatchEffectTrainer:
                 noise = torch.randint(
                     batch_x.size(1), size=batch_x.shape).to(batch_x)
                 batch_x_noise = noise > (batch_x.size(1) * self.denoise)
-                batch_x_noise = batch_x.noise.float()
+                batch_x_noise = batch_x_noise.float()
                 batch_x_noise = batch_x * batch_x_noise
             else:
                 batch_x_noise = batch_x
@@ -354,7 +354,7 @@ class BatchEffectTrainer:
                 noise = torch.randint(
                     batch_x.size(1), size=batch_x.shape).to(batch_x)
                 batch_x_noise = noise > (batch_x.size(1) * self.denoise)
-                batch_x_noise = batch_x.noise.float()
+                batch_x_noise = batch_x_noise.float()
                 batch_x_noise = batch_x * batch_x_noise
             else:
                 batch_x_noise = batch_x
