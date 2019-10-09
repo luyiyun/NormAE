@@ -164,6 +164,7 @@ class BatchEffectTrainer:
         self.use_batch_for_order = use_batch_for_order
         self.early_stop = early_stop
         self.denoise = denoise
+        self.batch_label_num = batch_label_num
 
         # 可视化工具
         self.visobj = VisObj(visdom_port)
@@ -320,10 +321,10 @@ class BatchEffectTrainer:
             # discriminator loss
             ad_loss_args = [None] * 5
             if self.cls_weight > 0.0:
-                ad_loss_args[0] = logit[:, 1:]
+                ad_loss_args[0] = logit[:, :self.batch_label_num]
                 ad_loss_args[1] = batch_y[:, 1]
             if self.order_weight > 0.0:
-                ad_loss_args[2] = logit[:, 0]
+                ad_loss_args[2] = logit[:, -1]
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
@@ -357,10 +358,10 @@ class BatchEffectTrainer:
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
             ad_loss_args = [None] * 5
             if self.cls_weight > 0.0:
-                ad_loss_args[0] = logit[:, 1:]
+                ad_loss_args[0] = logit[:, :self.batch_label_num]
                 ad_loss_args[1] = batch_y[:, 1]
             if self.order_weight > 0.0:
-                ad_loss_args[2] = logit[:, 0]
+                ad_loss_args[2] = logit[:, -1]
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
