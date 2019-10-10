@@ -208,6 +208,7 @@ class OrderLoss(nn.Module):
         super(OrderLoss, self).__init__()
         self.leastsquare=leastsquare
         self.mse = nn.MSELoss()
+        self.ce = nn.BCEWithLogitsLoss()
 
     def forward(self, pred, target, group=None):
         '''
@@ -227,9 +228,15 @@ class OrderLoss(nn.Module):
             if len(low) == 0:  # 有可能是空的，这时求mean是nan
                 return torch.tensor(0.).float()
             low_pred, high_pred = pred[low], pred[high]
-            diff = (1 - high_pred + low_pred).clamp(min=0)
-            diff = diff ** 2
-            return diff.mean()
+            res = self.ce(
+                high_pred - low_pred,
+                torch.ones(high_pred.size(0),
+                           device=pred.device)
+            )
+            return res
+            #  diff = (1 - high_pred + low_pred).clamp(min=0)
+            #  diff = diff ** 2
+            #  return diff.mean()
 
     @staticmethod
     def _comparable_pairs(true_rank, group=None):

@@ -117,9 +117,9 @@ class BatchEffectTrainer:
         if not isinstance(lrs, (tuple, list)):
             lrs = [lrs] * 2
         if optimizer == 'rmsprop':
-            optimizer_obj = optim.RMSprop
+            optimizer_obj = partial(optim.RMSprop, momentum=0.5)
         elif optimizer == 'adam':
-            optimizer_obj = optim.Adam
+            optimizer_obj = partial(optim.Adam, betas=(0.5, 0.999))
         else:
             raise ValueError
         self.optimizers = {
@@ -437,7 +437,7 @@ def main():
     torch.save(best_models, os.path.join(dirname, 'models.pth'))
     pd.DataFrame(hist).to_csv(os.path.join(dirname, 'train.csv'))
     config.save(os.path.join(dirname, 'config.json'))
-
+    
 
 if __name__ == "__main__":
     main()
