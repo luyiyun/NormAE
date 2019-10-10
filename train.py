@@ -29,7 +29,7 @@ class BatchEffectTrainer:
         l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
         ae_disc_weight=(1.0, 1.0), label_smooth=0.2,
         train_with_qc=False, spectral_norm=False, schedual_stones=[3000],
-        cls_leastsquare=False, order_leastsquare=False,
+        cls_leastsquare=False, order_losstype=False,
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
@@ -71,10 +71,10 @@ class BatchEffectTrainer:
             'reconstruction': nn.MSELoss(),
             'adversarial_train': ClsOrderLoss(
                 int(self.cls_weight != 0), int(self.order_weight != 0),
-                cls_leastsquare, order_leastsquare, label_smooth),
+                cls_leastsquare, order_losstype, label_smooth),
             'adversarial_ae': ClsOrderLoss(
                 self.cls_weight, self.order_weight, cls_leastsquare,
-                order_leastsquare, label_smooth),
+                order_losstype, label_smooth),
         }
         # according to cls_order_weight, choose classification criterion
         if self.cls_weight > 0.0 and self.order_weight > 0.0:
@@ -410,7 +410,7 @@ def main():
         spectral_norm=config.args.spectral_norm,
         schedual_stones=config.args.schedual_stones,
         cls_leastsquare=config.args.cls_leastsquare,
-        order_leastsquare=config.args.order_leastsquare,
+        order_losstype=config.args.order_losstype,
         cls_order_weight=config.args.cls_order_weight,
         use_batch_for_order=config.args.use_batch_for_order,
         visdom_port=config.args.visdom_port,

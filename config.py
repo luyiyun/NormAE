@@ -48,7 +48,7 @@ class Config:
             help="重建误差权重和对抗权重，默认是1.0和1.0"
         )
         self.parser.add_argument(
-            '--cls_order_weight', default=(1.0, 1.0), nargs=2, type=int,
+            '--cls_order_weight', default=(1.0, 1.0), nargs=2, type=float,
             help="cls loss和order loss在判别是所占的比例，默认是1:1"
         )
         self.parser.add_argument(
@@ -64,8 +64,8 @@ class Config:
             help="if use, mse rather than ce in cls loss."
         )
         self.parser.add_argument(
-            '--order_leastsquare', action='store_true',
-            help="if use, mse rather than ce in order loss."
+            '--order_losstype', default='paired_ce',
+            help="the loss type of use for ranking"
         )
         self.parser.add_argument(
             '--use_batch_for_order', action='store_true',

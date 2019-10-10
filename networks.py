@@ -192,7 +192,7 @@ class ClswithLabelSmoothLoss(nn.Module):
 
 
 class OrderLoss(nn.Module):
-    def __init__(self, leastsquare=False):
+    def __init__(self, loss_type='paired_ce'):
         '''
         discriminator的关于injection.order的部分，可以选择使用rank loss和最小
         二乘回归，如果是使用最小二乘回归，则直接将injection.order当做一个连续
@@ -203,11 +203,10 @@ class OrderLoss(nn.Module):
         参与loss的计算，不会提供信息。
 
         args:
-            leastsquare: Boolean，是否使用mse来代替rank loss；
         '''
         super(OrderLoss, self).__init__()
-        self.leastsquare=leastsquare
-        self.mse = nn.MSELoss()
+        self.loss_type=loss_type
+        self.softmax = nn.Softmax(dim=0)
         self.ce = nn.BCEWithLogitsLoss()
 
     def forward(self, pred, target, group=None):
@@ -220,8 +219,19 @@ class OrderLoss(nn.Module):
         '''
         pred = pred.squeeze()
         target = target.float()
-        if self.leastsquare:
-            return self.mse(pred, target)
+        if self.loss_type == 'listnet':
+            pred = self.softmax(pred)
+            target = self.softmax(target)
+            # 实际上，作为ce，前面还有个负号，但因为在真正的listnet中，
+            #   值越大排名越靠前，而这里是值越小排名越靠前，所以需要取反
+            # 但我们这里只是用来去掉其排序信息的，不用预测正确，预测反
+            #   了也算取到了其排序信息
+            return -(target * pred.log()).sum()
+        elif self.loss_type == 'listmle':
+            sort_index = target.squeeze().argsort()
+            sort_pred = pred[sort_index]
+            sort_pred_exp = sort_pred.exp().flip(0)
+            return -(sort_pred_exp / sort_pred_exp.cumsum(0)).log().mean()
         else:
             # rank loss
             low, high = self._comparable_pairs(target, group)
@@ -267,7 +277,7 @@ class OrderLoss(nn.Module):
 class ClsOrderLoss(nn.Module):
     def __init__(
         self, cls_weight=1.0, order_weight=1.0, cls_leastsquare=False,
-        order_leastsquare=False, cls_smoothing=0.2
+        order_losstype='paired_ce', cls_smoothing=0.2
     ):
         '''
         这个是将上面两个loss结合在一起的loss module，便于管理和使用。
@@ -284,7 +294,7 @@ class ClsOrderLoss(nn.Module):
         self.cls_weight, self.order_weight = cls_weight, order_weight
         self.cls_loss = ClswithLabelSmoothLoss(
             smoothing=cls_smoothing, leastsquare=cls_leastsquare)
-        self.order_loss = OrderLoss(leastsquare=order_leastsquare)
+        self.order_loss = OrderLoss(loss_type=order_losstype)
 
     def forward(
         self, cls_pred=None, cls_target=None, order_pred=None,
@@ -322,24 +332,7 @@ def test():
     cls_target = torch.randint(4, size=(32,))
     order_pred = torch.randn(32, 1)
     order_target = torch.arange(32).permute(0)
-
-    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
-    print(criterion(
-        cls_pred, cls_target, order_pred, order_target, cls_target))
-
-    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
-    print(criterion(
-        None, None, order_pred, order_target, cls_target))
-
-    criterion = ClsOrderLoss(1.0, 1.0, False, False, 0.2)
-    print(criterion(
-        cls_pred, cls_target, order_pred, order_target, cls_target))
-
-    criterion = ClsOrderLoss(1.0, 1.0, False, False, 0.0)
-    print(criterion(cls_pred, cls_target, order_pred, order_target))
-
-    criterion = ClsOrderLoss(1.0, 1.0, True, True, 0.2)
-    print(criterion(None, None, None, None))
+    raise NotImplementedError
 
 
 if __name__ == '__main__':
