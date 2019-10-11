@@ -125,6 +125,13 @@ class Config:
             '--spectral_norm', action='store_true',
             help='if use, linear layer will be spectral normalized.'
         )
+        self.parser.add_argument(
+            '--load_model', default='',
+            help="之前保存的模型参数，可以用来接着进行训练"
+        )
+        self.parser.add_argument(
+            '--reconst_loss', default='mse'
+        )
 
         self.args = self.parser.parse_args()
 

@@ -34,7 +34,7 @@ class BatchEffectTrainer:
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
         early_stop=False, net_type='simple', resnet_bottle_num=50,
-        optimizer='rmsprop', denoise=0.1
+        optimizer='rmsprop', denoise=0.1, reconst_loss='mae'
     ):
         '''
         in_features: the number of input features;
@@ -68,7 +68,7 @@ class BatchEffectTrainer:
         # 得到两个loss
         self.cls_weight, self.order_weight = cls_order_weight
         self.criterions = {
-            'reconstruction': nn.MSELoss(),
+            'reconstruction': nn.L1Loss() if reconst_loss == 'mae' else nn.MSELoss(),
             'adversarial_train': ClsOrderLoss(
                 int(self.cls_weight != 0), int(self.order_weight != 0),
                 cls_leastsquare, order_losstype, label_smooth),
@@ -279,6 +279,12 @@ class BatchEffectTrainer:
 
         return self.models, self.history
 
+    def load_model(self, model_file):
+        saved_model = torch.load(model_file)
+        for k in self.early_stop_objs:
+            saved_model.pop(k)
+        self.models = saved_model
+
     def check_qc(self, e, qc_dist, qc_loss):
         early_stop_score = qc_dist + qc_loss * 100
         if early_stop_score < self.early_stop_objs['best_score']:
@@ -421,9 +427,11 @@ def main():
         net_type=config.args.net_type,
         resnet_bottle_num=config.args.resnet_bottle_num,
         optimizer=config.args.optim,
-        denoise=config.args.denoise
+        denoise=config.args.denoise,
+        reconst_loss=config.args.reconst_loss
     )
-
+    if config.args.load_model != '':
+        trainer.load_model(config.args.load_model)
     best_models, hist = trainer.fit(datas)
     print('')
 
