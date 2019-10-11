@@ -153,9 +153,9 @@ class BatchEffectTrainer:
         self.autoencode_train_num, self.discriminate_train_num = \
             ae_disc_train_num
         if len(disc_weight) == 2:
-            self.disc_weight = np.linspace(*disc_weight, num=200)
+            self.disc_weight = np.linspace(*disc_weight, num=500)
             self.disc_weight = np.concatenate(
-                [self.disc_weight, np.full(epoch-200, disc_weight[-1])],
+                [self.disc_weight, np.full(epoch-500, disc_weight[-1])],
                 axis=0)
         elif len(disc_weight) == 1:
             self.disc_weight = np.full(epoch, disc_weight[0])
