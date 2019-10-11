@@ -91,7 +91,7 @@ class BatchEffectTrainer:
                 'decoder': SimpleCoder(
                     [bottle_num] + decoder_hiddens + [in_features]).to(device),
                 'discriminator': SimpleCoder(
-                    [no_be_num] + disc_hiddens + [logit_dim]).to(device)
+                    [no_be_num] + disc_hiddens + [logit_dim], bn=False).to(device)
             }
         else:
             self.models = {

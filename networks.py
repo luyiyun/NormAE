@@ -104,7 +104,7 @@ class ResNet(nn.Module):
 
 
 class SimpleCoder(nn.Module):
-    def __init__(self, units, act=nn.LeakyReLU()):
+    def __init__(self, units, act=nn.LeakyReLU(), bn=True):
         '''
         构建多层全连接
 
@@ -120,7 +120,8 @@ class SimpleCoder(nn.Module):
             one_layer.append(linear_layer)
             if i < (len(units) - 2):  # 因为units是包括了输入层的
                 one_layer.append(act)
-                one_layer.append(nn.BatchNorm1d(u2))
+                if bn:
+                    one_layer.append(nn.BatchNorm1d(u2))
             one_layer = nn.Sequential(*one_layer)
             self.layers.append(one_layer)
 
