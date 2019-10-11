@@ -43,22 +43,23 @@ class NDCG:
     def value(self):
         self.preds = torch.cat(self.preds, dim=0)
         self.targets = torch.cat(self.targets, dim=0)
-        return ndcg(self.preds, self.targets).detach().cpu().numpy()
+        return ndcg(self.preds, self.targets).detach().cpu().item()
 
 class RankPredictor:
     def __init__(self, loss_type, in_f, lr, device=torch.device('cuda:0')):
         self.model = nn.Sequential(
             nn.Linear(in_f, 2000),
-            nn.BatchNorm1d(2000),
+            #  nn.BatchNorm1d(2000),
             nn.LeakyReLU(),
             nn.Linear(2000, 2000),
-            nn.BatchNorm1d(2000),
+            #  nn.BatchNorm1d(2000),
             nn.LeakyReLU(),
             nn.Linear(2000, 1)
         ).to(device)
         self.criterion = OrderLoss(loss_type)
         self.optimizer = optim.Adam(
-            self.model.parameters(), lr, betas=(0.5, 0.999))
+            self.model.parameters(), lr)  # , betas=(0.5, 0.999)
+        self.optimizer.zero_grad()
 
         self.history = {'train_loss': [], 'train_ndcg': [],
                         'valid_loss': [], 'valid_ndcg': []}
@@ -78,6 +79,10 @@ class RankPredictor:
             loss_objs = {'train': Loss(), 'valid': Loss()}
             ndcg_objs = {'train': NDCG(), 'valid': NDCG()}
             for phase in ['train', 'valid']:
+                if phase == 'train':
+                    self.model.train()
+                else:
+                    self.model.eval()
                 for batch_x, batch_y in tqdm(loaders[phase], 'batch: '):
                     batch_x = batch_x.to(self.device).float()
                     batch_y = batch_y.to(self.device).float()
@@ -87,7 +92,9 @@ class RankPredictor:
                         loss = self.criterion(pred_score, batch_y[:, 0])
                         if phase == 'train':
                             loss.backward()
+                            nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1)
                             self.optimizer.step()
+                            self.optimizer.zero_grad()
 
                     with torch.no_grad():
                         loss_objs[phase].add(loss, batch_x.size(0))              
@@ -97,6 +104,8 @@ class RankPredictor:
             self.history['valid_loss'].append(loss_objs['valid'].value())
             self.history['train_ndcg'].append(ndcg_objs['train'].value())
             self.history['valid_ndcg'].append(ndcg_objs['valid'].value())
+            #  if e > 50:
+                #  import ipdb; ipdb.set_trace()
 
             self.visobj.add_epoch_loss(
                 'epoch_loss', train=self.history['train_loss'][-1],
@@ -124,11 +133,11 @@ def main():
 
     trainer = RankPredictor(
         loss_type='listnet', in_f=subject_dat.num_features,
-        lr=0.0001, device=torch.device('cuda:0')
+        lr=0.00001, device=torch.device('cuda:0')
     )
-    history = trainer.fit(datas, bs=64, nw=12, epoch=1000)
+    history = trainer.fit(datas, bs=int(sys.argv[2]), nw=12, epoch=200)
 
-    with open('./RESULTS/'+loss_type+'.json', w) as f:
+    with open('./RESULTS/'+loss_type+'.json', 'w') as f:
         json.dump(history, f)
 
 if __name__ == '__main__':

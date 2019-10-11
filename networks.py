@@ -220,13 +220,15 @@ class OrderLoss(nn.Module):
         pred = pred.squeeze()
         target = target.float()
         if self.loss_type == 'listnet':
-            pred = self.softmax(pred)
-            target = self.softmax(target)
-            # 实际上，作为ce，前面还有个负号，但因为在真正的listnet中，
-            #   值越大排名越靠前，而这里是值越小排名越靠前，所以需要取反
-            # 但我们这里只是用来去掉其排序信息的，不用预测正确，预测反
-            #   了也算取到了其排序信息
-            return -(target * pred.log()).sum()
+            if group is None:
+                pred = self.softmax(pred)
+                target = self.softmax(target)
+                return -(target * pred.log()).sum()
+            else:
+                raise NotImplementedError
+                #  unique_group = torch.unique(group)
+                #  for g in unique_group:
+                    #  pred = self.(pred)kk
         elif self.loss_type == 'listmle':
             sort_index = target.squeeze().argsort()
             sort_pred = pred[sort_index]
@@ -239,7 +241,7 @@ class OrderLoss(nn.Module):
                 return torch.tensor(0.).float()
             low_pred, high_pred = pred[low], pred[high]
             res = self.ce(
-                high_pred - low_pred,
+                low_pred - high_pred,
                 torch.ones(high_pred.size(0),
                            device=pred.device)
             )

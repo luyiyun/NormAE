@@ -95,6 +95,8 @@ def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     y_df['group'] = y_df['group'].astype('int')
     # class也进行修改
     y_df['class'].replace({'Subject': 1, 'QC': 0}, inplace=True)
+    # 反转injection.order，即越靠前的值有越大的数
+    y_df['injection.order'] = y_df['injection.order'].max() - y_df['injection.order']
 
     if pre_transfer is not None:
         meta_df, y_df = pre_transfer(meta_df, y_df)
