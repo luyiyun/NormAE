@@ -193,17 +193,6 @@ class ClswithLabelSmoothLoss(nn.Module):
 
 class OrderLoss(nn.Module):
     def __init__(self, loss_type='paired_ce'):
-        '''
-        discriminator的关于injection.order的部分，可以选择使用rank loss和最小
-        二乘回归，如果是使用最小二乘回归，则直接将injection.order当做一个连续
-        的数值进行预测，如果是rank loss则将pred看做是输出的秩次，其只会保证秩次
-        的顺序。
-        如果使用的rankloss，并且提供了group，则计算rank loss的时候只会对处于
-        一个group内的样本进行比较，即认为不在一个group的样本间没有可比性，不会
-        参与loss的计算，不会提供信息。
-
-        args:
-        '''
         super(OrderLoss, self).__init__()
         self.loss_type=loss_type
         self.softmax = nn.Softmax(dim=0)
@@ -211,29 +200,46 @@ class OrderLoss(nn.Module):
 
     def forward(self, pred, target, group=None):
         '''
-
         args:
             pred: 是预测的order部分，batch x 1;
             target: size=(batch,)，储存injection.order信息;
             group: tensor, shape=(batch,)，用于计算rank loss使用;
         '''
         pred = pred.squeeze()
-        target = target.float()
+        target = target.squeeze().float()
         if self.loss_type == 'listnet':
             if group is None:
                 pred = self.softmax(pred)
                 target = self.softmax(target)
                 return -(target * pred.log()).sum()
             else:
-                raise NotImplementedError
-                #  unique_group = torch.unique(group)
-                #  for g in unique_group:
-                    #  pred = self.(pred)kk
+                # 对于提供了group，则需要对每个group的值进行计算后再加在一起
+                unique_group = torch.unique(group)
+                res = 0.
+                for g in unique_group:
+                    # 因为这个g是unique得到的，所以不会出现不存在的现象
+                    pred_g = self.softmax(pred[group == g])
+                    target_g = self.softmax(target[group == g])
+                    res -= (target_g * pred_g.log()).sum()
+                return res
         elif self.loss_type == 'listmle':
-            sort_index = target.squeeze().argsort()
-            sort_pred = pred[sort_index]
-            sort_pred_exp = sort_pred.exp().flip(0)
-            return -(sort_pred_exp / sort_pred_exp.cumsum(0)).log().mean()
+            if group is None:
+                sort_index = target.argsort()
+                sort_pred = pred[sort_index]
+                sort_pred_exp = sort_pred.exp().flip(0)
+                return -(sort_pred_exp / sort_pred_exp.cumsum(0)).log().mean()
+            else:
+                # 对于提供了group，则需要对每个group的值进行计算后再加在一起
+                unique_group = torch.unique(group)
+                res = 0.
+                for g in unique_group:
+                    # 因为这个g是unique得到的，所以不会出现不存在的现象
+                    sort_index_g = target[group == g].argsort()
+                    sort_pred_g = pred[group == g][sort_index_g]
+                    sort_pred_exp_g = sort_pred_g.exp().flip(0)
+                    res -= (sort_pred_exp_g / sort_pred_exp_g.cumsum(0)
+                            .log().mean())
+                return res
         else:
             # rank loss
             low, high = self._comparable_pairs(target, group)
@@ -246,9 +252,6 @@ class OrderLoss(nn.Module):
                            device=pred.device)
             )
             return res
-            #  diff = (1 - high_pred + low_pred).clamp(min=0)
-            #  diff = diff ** 2
-            #  return diff.mean()
 
     @staticmethod
     def _comparable_pairs(true_rank, group=None):
@@ -278,29 +281,18 @@ class OrderLoss(nn.Module):
 
 class ClsOrderLoss(nn.Module):
     def __init__(
-        self, cls_weight=1.0, order_weight=1.0, cls_leastsquare=False,
-        order_losstype='paired_ce', cls_smoothing=0.2
+        self, cls_leastsquare=False, order_losstype='paired_ce',
+        cls_smoothing=0.2
     ):
-        '''
-        这个是将上面两个loss结合在一起的loss module，便于管理和使用。
-
-        args:
-            cls_weight: 分类部分所占的weight，如果是0.0则没有分类；
-            order_weight: 排序部分所占的weight，如果是0.0则没有排序；
-            cls_leastsquare: ClswithLabelSmoothLoss的leastsquare参数；
-            order_leastsquare: OrderLoss的leastsquare参数；
-            cls_smoothing: ClswithLabelSmoothLoss的smoothin参数；
-        '''
-        assert cls_weight > 0.0 or order_weight > 0.0
         super(ClsOrderLoss, self).__init__()
-        self.cls_weight, self.order_weight = cls_weight, order_weight
         self.cls_loss = ClswithLabelSmoothLoss(
             smoothing=cls_smoothing, leastsquare=cls_leastsquare)
         self.order_loss = OrderLoss(loss_type=order_losstype)
 
     def forward(
         self, cls_pred=None, cls_target=None, order_pred=None,
-        order_target=None, order_group=None
+        order_target=None, order_group=None, cls_weight=1.0,
+        order_weight=1.0
     ):
         '''
         args:
@@ -313,20 +305,18 @@ class ClsOrderLoss(nn.Module):
         all_loss = 0.
         warning_indice = 0
         if cls_pred is not None and cls_target is not None:
-            cls_loss_output = self.cls_weight * \
-                self.cls_loss(cls_pred, cls_target)
-            all_loss += cls_loss_output
+            cls_loss_output =  self.cls_loss(cls_pred, cls_target)
+            all_loss += cls_weight * cls_loss_output
         else:
             warning_indice += 1
         if order_pred is not None and order_pred is not None:
-            order_loss_output = self.order_weight * \
-                self.order_loss(order_pred, order_target, order_group)
-            all_loss += order_loss_output
+            order_loss_output = self.order_loss(
+                order_pred, order_target, order_group)
+            all_loss += order_weight * order_loss_output
         else:
             warning_indice += 1
         assert warning_indice < 2
         return all_loss
-
 
 
 def test():

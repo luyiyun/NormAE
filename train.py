@@ -26,10 +26,9 @@ class BatchEffectTrainer:
     def __init__(
         self, in_features, bottle_num, no_be_num, batch_label_num=None,
         lrs=0.01, bs=64, nw=6, epoch=100, device=torch.device('cuda:0'),
-        l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1),
-        ae_disc_weight=(1.0, 1.0), label_smooth=0.2,
-        train_with_qc=False, spectral_norm=False, schedual_stones=[3000],
-        cls_leastsquare=False, order_losstype=False,
+        l2=0.0, clip_grad=False, ae_disc_train_num=(1, 1), disc_weight=1.0,
+        label_smooth=0.2, train_with_qc=False, spectral_norm=False,
+        schedual_stones=[3000], cls_leastsquare=False, order_losstype=False,
         cls_order_weight=(1.0, 1.0), use_batch_for_order=True,
         visdom_port=8097, encoder_hiddens=[300, 300, 300],
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
@@ -68,13 +67,10 @@ class BatchEffectTrainer:
         # 得到两个loss
         self.cls_weight, self.order_weight = cls_order_weight
         self.criterions = {
-            'reconstruction': nn.L1Loss() if reconst_loss == 'mae' else nn.MSELoss(),
-            'adversarial_train': ClsOrderLoss(
-                int(self.cls_weight != 0), int(self.order_weight != 0),
+            'reconstruction': (nn.L1Loss() if reconst_loss == 'mae'
+                               else nn.MSELoss()),
+            'adversarial': ClsOrderLoss(
                 cls_leastsquare, order_losstype, label_smooth),
-            'adversarial_ae': ClsOrderLoss(
-                self.cls_weight, self.order_weight, cls_leastsquare,
-                order_losstype, label_smooth),
         }
         # according to cls_order_weight, choose classification criterion
         if self.cls_weight > 0.0 and self.order_weight > 0.0:
@@ -156,7 +152,15 @@ class BatchEffectTrainer:
         self.clip_grad = clip_grad
         self.autoencode_train_num, self.discriminate_train_num = \
             ae_disc_train_num
-        self.ae_weight, self.disc_weight = ae_disc_weight
+        if len(disc_weight) == 2:
+            self.disc_weight = np.linspace(*disc_weight, num=200)
+            self.disc_weight = np.concatenate(
+                [self.disc_weight, np.full(epoch-200, disc_weight[-1])],
+                axis=0)
+        elif len(disc_weight) == 1:
+            self.disc_weight = np.full(epoch, disc_weight[0])
+        else:
+            raise ValueError
         self.bs = bs
         self.nw = nw
         self.no_be_num = no_be_num
@@ -191,6 +195,7 @@ class BatchEffectTrainer:
 
         # 开始进行多个epoch训练
         for e in tqdm(range(self.epoch), 'Epoch: '):
+            self.e = e
             ## train phase
             # 实例化3个loss对象，用于计算epoch loss
             ad_loss_train_obj = mm.Loss()
@@ -325,7 +330,7 @@ class BatchEffectTrainer:
             recon_loss = self.criterions['reconstruction'](
                 batch_x_recon, batch_x)
             # discriminator loss
-            ad_loss_args = [None] * 5
+            ad_loss_args = [None] * 5 + [self.cls_weight, self.order_weight]
             if self.cls_weight > 0.0:
                 ad_loss_args[0] = logit[:, :self.batch_label_num]
                 ad_loss_args[1] = batch_y[:, 1]
@@ -334,11 +339,11 @@ class BatchEffectTrainer:
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
-            adversarial_loss = self.criterions['adversarial_ae'](*ad_loss_args)
+            adversarial_loss = self.criterions['adversarial'](*ad_loss_args)
             # 组合这些loss来得到最终计算梯度使用的loss
             # 分类做的不好，说明这些维度中没有批次的信息，批次的信息都在后面的维度中
-            all_loss = self.ae_weight * recon_loss - \
-                self.disc_weight * adversarial_loss
+            all_loss = recon_loss - self.disc_weight[self.e] * adversarial_loss
+
         all_loss.backward()
         if self.clip_grad:
             nn.utils.clip_grad_norm_(
@@ -362,7 +367,7 @@ class BatchEffectTrainer:
             hidden = self.models['encoder'](batch_x_noise)
         with torch.enable_grad():
             logit = self.models['discriminator'](hidden[:, :self.no_be_num])
-            ad_loss_args = [None] * 5
+            ad_loss_args = [None] * 5 + [self.cls_weight, self.order_weight]
             if self.cls_weight > 0.0:
                 ad_loss_args[0] = logit[:, :self.batch_label_num]
                 ad_loss_args[1] = batch_y[:, 1]
@@ -371,7 +376,7 @@ class BatchEffectTrainer:
                 ad_loss_args[3] = batch_y[:, 0]
             if self.use_batch_for_order:
                 ad_loss_args[4] = batch_y[:, 1]
-            adversarial_loss = self.criterions['adversarial_train'](
+            adversarial_loss = self.criterions['adversarial'](
                 *ad_loss_args)
         adversarial_loss.backward()
         if self.clip_grad:
@@ -410,7 +415,7 @@ def main():
         nw=config.args.num_workers, epoch=config.args.epoch,
         device=torch.device('cuda:0'), l2=config.args.l2, clip_grad=True,
         ae_disc_train_num=config.args.ae_disc_train_num,
-        ae_disc_weight=config.args.ae_disc_weight,
+        disc_weight=config.args.disc_weight,
         label_smooth=config.args.label_smooth,
         train_with_qc=config.args.train_data == 'all',
         spectral_norm=config.args.spectral_norm,

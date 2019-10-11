@@ -44,8 +44,7 @@ class Config:
             help="瓶颈层中不包含batch effect信息的节点数量，默认是90"
         )
         self.parser.add_argument(
-            '--ae_disc_weight', type=float, default=(1, 1), nargs=2,
-            help="重建误差权重和对抗权重，默认是1.0和1.0"
+            '--disc_weight', type=float, default=1.0, nargs='+',
         )
         self.parser.add_argument(
             '--cls_order_weight', default=(1.0, 1.0), nargs=2, type=float,
@@ -130,7 +129,7 @@ class Config:
             help="之前保存的模型参数，可以用来接着进行训练"
         )
         self.parser.add_argument(
-            '--reconst_loss', default='mse'
+            '--reconst_loss', default='mae'
         )
 
         self.args = self.parser.parse_args()
