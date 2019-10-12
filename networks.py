@@ -227,8 +227,8 @@ class OrderLoss(nn.Module):
             if group is None:
                 sort_index = target.argsort()
                 sort_pred = pred[sort_index]
-                sort_pred_exp = sort_pred.exp().flip(0)
-                return -(sort_pred_exp / sort_pred_exp.cumsum(0)).log().mean()
+                sort_pred_exp = sort_pred.exp()
+                return torch.mean(sort_pred_exp.cumsum(0).log() - sort_pred)
             else:
                 # 对于提供了group，则需要对每个group的值进行计算后再加在一起
                 unique_group = torch.unique(group)
@@ -237,9 +237,9 @@ class OrderLoss(nn.Module):
                     # 因为这个g是unique得到的，所以不会出现不存在的现象
                     sort_index_g = target[group == g].argsort()
                     sort_pred_g = pred[group == g][sort_index_g]
-                    sort_pred_exp_g = sort_pred_g.exp().flip(0)
-                    res -= (sort_pred_exp_g / sort_pred_exp_g.cumsum(0)
-                            .log().mean())
+                    sort_pred_exp_g = sort_pred_g.exp()
+                    res -= torch.mean(
+                        sort_pred_exp_g.cumsum(0).log() - sort_pred_g)
                 return res
         else:
             # rank loss

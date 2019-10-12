@@ -33,6 +33,7 @@ def generate(
     for m in models.values():
         if isinstance(m, nn.Module):
             m.eval()
+            m.to(device)
     if isinstance(data_loader, data.Dataset):
         data_loader = data.DataLoader(
             data_loader, batch_size=bs, num_workers=nw
