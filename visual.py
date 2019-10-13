@@ -47,11 +47,10 @@ class VisObj:
         return ks, vs
 
 
-def pca_for_dict(all_dict, ori=True, n_components=2, sub_qc_split=True):
+def pca_for_dict(all_dict, n_components=2, sub_qc_split=True):
     '''
-    对all_dict中的original_x、recons_no_batch、recons_all进行pca，并返回为dict
-    如果ori是False，则不对original进行pca，n_componets是pca的参数，sub_qc_split
-    控制是返回整个数据集，还是将subject和qc分开返回。
+    对all_dict中的Ori、Rec_nobe、Rec进行pca，并返回为dict
+    sub_qc_split控制是返回整个数据集，还是将subject和qc分开返回, 这时需要Ys
     注意，没有被pca处理的all_dict中的部分，会原样返回。
     '''
     # 因为generate的结果改成了dict of dfs
@@ -59,19 +58,13 @@ def pca_for_dict(all_dict, ori=True, n_components=2, sub_qc_split=True):
     ss = StandardScaler()
     pca_dict = {}
     for k, v in all_dict.items():
-        if k in ['recons_no_batch', 'recons_all', 'original_x']:
-            pca_dict[k] = ss.fit_transform(v.values)
-        elif k == 'ys':
+        if k in ['Rec_nobe', 'Rec', 'Ori']:
+            temp_dat = ss.fit_transform(v.values)
+            pca_dict[k] = pca.fit_transform(temp_dat)
+        elif k == 'Ys':
             pca_dict[k] = v.values
-    if ori:
-        # pca for original_x
-        pca_dict['original_x'] = pca.fit_transform(pca_dict['original_x'])
-    # get reconstructed datas
-    pca_dict['recons_no_batch'] = pca.fit_transform(
-        pca_dict['recons_no_batch'])
-    pca_dict['recons_all'] = pca.fit_transform(pca_dict['recons_all'])
     if sub_qc_split:
-        qc_index = pca_dict['ys'][:, -1] == 0
+        qc_index = pca_dict['Ys'][:, -1] == 0
         sub_pca_dict = {k: v[~qc_index, :] for k, v in pca_dict.items()}
         qc_pca_dict = {k: v[qc_index, :] for k, v in pca_dict.items()}
         return sub_pca_dict, qc_pca_dict
@@ -86,16 +79,15 @@ def pca_plot(subject_pca, qc_pca):
     #   effects or no batch effects
     ax = axs[0, 0]
     ax.scatter(
-        subject_pca['original_x'][:, 0], subject_pca['original_x'][:, 1],
+        subject_pca['Ori'][:, 0], subject_pca['Ori'][:, 1],
         c='r', label='Original X', alpha=0.5
     )
     ax.scatter(
-        subject_pca['recons_all'][:, 0], subject_pca['recons_all'][:, 1],
+        subject_pca['Rec'][:, 0], subject_pca['Rec'][:, 1],
         c='b', label='Reconstructed X with BE', alpha=0.5
     )
     ax.scatter(
-        subject_pca['recons_no_batch'][:, 0],
-        subject_pca['recons_no_batch'][:, 1],
+        subject_pca['Rec_nobe'][:, 0], subject_pca['Rec_nobe'][:, 1],
         c='g', label='Reconstructed X without BE', alpha=0.5
     )
     ax.set_title('Subject points')
@@ -105,16 +97,15 @@ def pca_plot(subject_pca, qc_pca):
     #   effects or no batch effects
     ax = axs[0, 1]
     ax.scatter(
-        qc_pca['original_x'][:, 0], qc_pca['original_x'][:, 1],
+        qc_pca['Ori'][:, 0], qc_pca['Ori'][:, 1],
         c='r', label='Original X', alpha=0.5
     )
     ax.scatter(
-        qc_pca['recons_all'][:, 0], qc_pca['recons_all'][:, 1],
+        qc_pca['Rec'][:, 0], qc_pca['Rec'][:, 1],
         c='b', label='Reconstructed X with BE', alpha=0.5
     )
     ax.scatter(
-        qc_pca['recons_no_batch'][:, 0],
-        qc_pca['recons_no_batch'][:, 1],
+        qc_pca['Rec_nobe'][:, 0], qc_pca['Rec_nobe'][:, 1],
         c='g', label='Reconstructed X without BE', alpha=0.5
     )
     ax.set_title('QC points')
@@ -122,18 +113,16 @@ def pca_plot(subject_pca, qc_pca):
 
     # reconstructed datas without batch effects of Subject points and QC points
     # Batch Label
-    plot_index = np.any(subject_pca['ys'][:, 1] != -1)
+    plot_index = np.any(subject_pca['Ys'][:, 1] != -1)
     if plot_index:
         ax = axs[1, 0]
         ax.scatter(
-            subject_pca['recons_no_batch'][:, 0],
-            subject_pca['recons_no_batch'][:, 1],
-            c=subject_pca['ys'][:, 1], label='Subject', alpha=0.1
+            subject_pca['Rec_nobe'][:, 0], subject_pca['Rec_nobe'][:, 1],
+            c=subject_pca['Ys'][:, 1], label='Subject', alpha=0.1
         )
         scatter = ax.scatter(
-            qc_pca['recons_no_batch'][:, 0],
-            qc_pca['recons_no_batch'][:, 1],
-            c=qc_pca['ys'][:, 1], label='QC', alpha=1.0
+            qc_pca['Rec_nobe'][:, 0], qc_pca['Rec_nobe'][:, 1],
+            c=qc_pca['Ys'][:, 1], label='QC', alpha=1.0
         )
         ax.set_title('Subject vs QC without BE under batch group')
         legend1 = ax.legend(
@@ -143,17 +132,16 @@ def pca_plot(subject_pca, qc_pca):
 
     # reconstructed datas without batch effects of Subject points and QC points
     # injection order
-    plot_index = np.any(subject_pca['ys'][:, 2] != -1)
+    plot_index = np.any(subject_pca['Ys'][:, 2] != -1)
     if plot_index:
         ax = axs[1, 1]
         ax.scatter(
-            qc_pca['recons_no_batch'][:, 0], qc_pca['recons_no_batch'][:, 1],
+            qc_pca['Rec_nobe'][:, 0], qc_pca['Rec_nobe'][:, 1],
             c='r', label='QC', alpha=0.5
         )
         scatter = ax.scatter(
-            subject_pca['recons_no_batch'][:, 0],
-            subject_pca['recons_no_batch'][:, 1],
-            c=subject_pca['ys'][:, 2], label='Subject', alpha=0.5
+            subject_pca['Rec_nobe'][:, 0], subject_pca['Rec_nobe'][:, 1],
+            c=subject_pca['Ys'][:, 2], label='Subject', alpha=0.5
         )
         ax.set_title('Subject vs QC without BE under predicted class')
         handles, labels = scatter.legend_elements()

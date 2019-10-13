@@ -13,139 +13,7 @@ from sklearn.feature_selection import f_classif
 from datasets import get_demo_data, get_metabolic_data, ConcatData
 from transfer import Normalization
 from metrics import Loss
-
-
-def generate(
-    models, data_loader, no_be_num=None, bs=64, nw=12,
-    device=torch.device('cuda:0'), verbose=True, ica=True,
-    compute_qc_loss=False
-):
-    '''
-    data_loaders: Dataset对象或Dataloader对象
-    no_be_num: 如果None，则表示对所有codes进行ICA，如果不是None，则其表示的前
-        几个维度的codes是非批次效应编码，只会对其之后的编码进行ICA;
-
-    return：
-        It's generator，the element is dict，the keys are "recons_no_batch、
-        recons_all、original_x、ys”, the values aredataframe.
-    '''
-    # 准备数据集和模型
-    for m in models.values():
-        if isinstance(m, nn.Module):
-            m.eval()
-            m.to(device)
-    if isinstance(data_loader, data.Dataset):
-        data_loader = data.DataLoader(
-            data_loader, batch_size=bs, num_workers=nw
-        )
-    x_recon, x_recon_ica, x_ori, x_recon_be, ys, codes = [], [], [], [], [], []
-    qc_loss = Loss()
-    mse = nn.MSELoss()
-
-    # encoding
-    if verbose:
-        print('----- encoding -----')
-        iterator = tqdm(data_loader, 'encode and decode: ')
-    else:
-        iterator = data_loader
-    with torch.no_grad():
-        for batch_x, batch_y in iterator:
-            # X和Y都备份一次
-            x_ori.append(batch_x)
-            ys.append(batch_y)
-            # 计算hidden codes
-            batch_x = batch_x.to(device, torch.float)
-            hidden = models['encoder'](batch_x)
-            codes.append(hidden)
-            # AE重建
-            x_recon_be.append(models['decoder'](hidden))
-            # 去除批次重建
-            hidden_copy = hidden.clone()
-            # hidden_copy[:, no_be_num:] = hidden_copy[:, no_be_num:].mean(dim=0)
-            hidden_copy[:, no_be_num:] = 0
-            x_recon.append(models['decoder'](hidden_copy))
-            # 是否计算qc的loss，在训练的时候有用
-            if compute_qc_loss:
-                qc_index = batch_y[:, -1] == 0.
-                if qc_index.sum() > 0:
-                    batch_qc_loss = mse(batch_x[qc_index],
-                                        x_recon_be[-1][qc_index])
-                    qc_loss.add(
-                        batch_qc_loss, qc_index.sum().detach().cpu().item())
-                else:
-                    qc_loss.add(torch.tensor(0.), 0)
-
-    res = {
-        'original_x': torch.cat(x_ori), 'ys': torch.cat(ys),
-        'codes': torch.cat(codes), 'recons_all': torch.cat(x_recon_be),
-        'recons_no_batch': torch.cat(x_recon)
-    }
-    for k, v in res.items():
-        if v is not None:
-            if k == 'ys':
-                res[k] = pd.DataFrame(
-                    v.detach().cpu().numpy(),
-                    index=data_loader.dataset.Y_df.index,
-                    columns=data_loader.dataset.Y_df.columns
-                )
-            elif k != 'codes':
-                res[k] = pd.DataFrame(
-                    v.detach().cpu().numpy(),
-                    index=data_loader.dataset.X_df.index,
-                    columns=data_loader.dataset.X_df.columns
-                )
-            else:
-                res[k] = pd.DataFrame(
-                    v.detach().cpu().numpy(),
-                    index=data_loader.dataset.X_df.index,
-                )
-
-
-    # 进行ICA
-    if ica:
-        if verbose:
-            print('----- decoding with ICA -----')
-            print('FastICA beginning!!')
-
-        # 使用标签对ICA分解后的数据进行筛选，选择没有意义的成分
-        ica_use_data = res['codes'].values[:, no_be_num:]
-        ica_estimator = FastICA()
-        transfered_data = ica_estimator.fit_transform(ica_use_data)
-        _, pvals = f_classif(transfered_data, res['ys'].values[:, 1])
-        mask_sig = pvals < 0.05
-        if verbose:
-            print('total %d codes, significated %d, their indices are:'
-                % (len(mask_sig), mask_sig.sum()))
-            print(np.argwhere(mask_sig).squeeze())
-        transfered_data[:, mask_sig] = 0
-        # ICA逆转换回来
-        filtered_data = ica_estimator.inverse_transform(transfered_data)
-        if no_be_num is not None:
-            filtered_data = np.concatenate(
-                [res['codes'].values[:, :no_be_num], filtered_data], axis=1
-            )
-        filtered_data = data.TensorDataset(torch.tensor(filtered_data))
-        filtered_data = data.DataLoader(
-            filtered_data, batch_size=bs, num_workers=nw)
-        # decode部分
-        if verbose:
-            iterator = tqdm(filtered_data, 'decode with ICA: ')
-        else:
-            iterator = filtered_data
-        with torch.no_grad():
-            for hidden, in iterator:
-                hidden = hidden.to(device, torch.float)
-                batch_x_recon = models['decoder'](hidden)
-                x_recon_ica.append(batch_x_recon)
-        res['recons_no_batch_ica'] = pd.DataFrame(
-            torch.cat(x_recon_ica).detach().cpu().numpy(),
-            index=data_loader.dataset.X_df.index,
-            columns=data_loader.dataset.X_df.columns
-        )
-
-    if compute_qc_loss:
-        return res, qc_loss.value()
-    return res
+from train import BatchEffectTrainer
 
 
 def generate_forAE(
@@ -270,26 +138,21 @@ def main():
     # config
     with open(os.path.join(task_path, 'config.json'), 'r') as f:
         save_json = json.load(f)
-    if 'no_batch_num' not in save_json:
-        save_json['no_batch_num'] = None
     print(save_json)
 
     # ----- 读取数据 -----
     pre_transfer = Normalization(save_json['data_normalization'])
     if save_json['task'] == 'demo':
-        subject_dat, qc_dat = get_demo_data(
-            Config.demo_sub_file, Config.demo_qc_file, pre_transfer
+        all_dat = get_demo_data(
+            Config.demo_sub_file, Config.demo_qc_file, pre_transfer,
+            sub_qc_split=False
         )
     else:
-        subject_dat, qc_dat = get_metabolic_data(
+        all_dat = get_metabolic_data(
             Config.metabolic_x_files[save_json['task']],
             Config.metabolic_y_files[save_json['task']],
-            pre_transfer=pre_transfer
+            pre_transfer=pre_transfer, sub_qc_split=False
         )
-
-    # ----- 读取训练好的模型 -----
-    models = os.path.join(task_path, 'models.pth')
-    models = torch.load(models)
 
     if args.autoencoder:
         print('For AutoEncoder')
@@ -305,16 +168,46 @@ def main():
         print('')
     else:
         # ----- 得到生成的数据 -----
-        all_res = generate(
-            models, ConcatData(subject_dat, qc_dat),
-            save_json['no_batch_num'], bs=save_json['batch_size'],
-            nw=save_json['num_workers'], device=torch.device('cuda:0')
+        trainer = BatchEffectTrainer(
+            all_dat.num_features, save_json['bottle_num'],
+            save_json['be_num'], batch_label_num=all_dat.num_batch_labels,
+            lrs=save_json['ae_disc_lr'], bs=save_json['batch_size'],
+            nw=save_json['num_workers'], epoch=save_json['epoch'],
+            device=torch.device('cuda:0'), l2=save_json['l2'], clip_grad=True,
+            ae_disc_train_num=save_json['ae_disc_train_num'],
+            disc_weight=save_json['disc_weight'],
+            label_smooth=save_json['label_smooth'],
+            train_with_qc=save_json['train_data' ]== 'all',
+            spectral_norm=save_json['spectral_norm'],
+            schedual_stones=save_json['schedual_stones'],
+            cls_leastsquare=save_json['cls_leastsquare'],
+            order_losstype=save_json['order_losstype'],
+            cls_order_weight=save_json['cls_order_weight'],
+            use_batch_for_order=save_json['use_batch_for_order'],
+            visdom_port=save_json['visdom_port'],
+            decoder_hiddens=save_json['ae_units'],
+            encoder_hiddens=save_json['ae_units'][::-1],
+            disc_hiddens=save_json['disc_units'],
+            early_stop=save_json['early_stop'],
+            net_type=save_json['net_type'],
+            resnet_bottle_num=save_json['resnet_bottle_num'],
+            optimizer=save_json['optim'],
+            denoise=save_json['denoise'],
+            reconst_loss=save_json['reconst_loss'],
+            disc_weight_epoch=save_json['disc_weight_epoch'],
+            early_stop_check_num=save_json['early_stop_check_num']
         )
+        trainer.load_model(os.path.join(task_path, 'models.pth'))
+        all_res = trainer.generate(
+            all_dat, verbose=True, compute_qc_loss=False)
+
         # ----- 保存 -----
         for k, v in all_res.items():
-            if k not in ['ys', 'codes']:
+            if k not in ['Ys', 'Codes']:
                 v, _ = pre_transfer.inverse_transform(v, None)
-            v.to_csv(os.path.join(task_path, 'all_res_%s.csv' % k))
+                v = v.T  # 列为样本，行为变量，读取时比较快速
+                v.index.name = 'meta.name'
+            v.to_csv(os.path.join(task_path, '%s.csv' % k))
         print('')
 
 

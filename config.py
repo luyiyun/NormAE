@@ -36,12 +36,12 @@ class Config:
                   "即使用所有数据来train")
         )
         self.parser.add_argument(
-            '-e', '--epoch', default=5000, type=int,
-            help='epoch 数量，默认是5000'
+            '-e', '--epoch', default=(200, 100, 1000), type=int, nargs=3,
+            help='epoch 数量，默认是(200, 100, 1000)'
         )
         self.parser.add_argument(
-            '--no_batch_num', type=int, default=90,
-            help="瓶颈层中不包含batch effect信息的节点数量，默认是90"
+            '--be_num', type=int, default=5,
+            help="包含批次效应的节点数目，默认是5"
         )
         self.parser.add_argument(
             '--disc_weight', type=float, default=1.0, nargs='+',
@@ -131,6 +131,11 @@ class Config:
         self.parser.add_argument(
             '--reconst_loss', default='mae'
         )
+        self.parser.add_argument(
+            '--disc_weight_epoch', default=500, type=int
+        )
+        self.parser.add_argument(
+            '--early_stop_check_num', default=100, type=int)
 
         self.args = self.parser.parse_args()
 

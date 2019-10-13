@@ -25,6 +25,8 @@ class Loss(Meter):
         self.num_samples += batch_size
 
     def value(self):
+        if self.num_samples == 0:
+            return np.nan
         return self.running_loss / self.num_samples
 
 

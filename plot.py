@@ -14,8 +14,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('save', help="储存结果的文件夹")
     parser.add_argument(
-        '--ica', action='store_true', help='是否使用ica处理后的数据')
-    parser.add_argument(
         '--pca', action='store_true', help="是否绘制PCA图"
     )
     parser.add_argument('--meta_scatter', nargs='*',
@@ -28,15 +26,11 @@ def main():
 
     task_path = args.save
     # ----- 读取数据集 -----
-    data_names = ['original_x', 'recons_no_batch', 'recons_all', 'ys']
+    data_names = ['Ori', 'Rec_nobe', 'Rec', 'Ys']
     all_res = {}
     for dn in data_names:
-        if dn == 'recons_no_batch' and args.ica:
-            file_name = dn + '_ica'
-        else:
-            file_name = dn
         all_res[dn] = pd.read_csv(
-            os.path.join(task_path, 'all_res_%s.csv' % file_name), index_col=0)
+            os.path.join(task_path, '%s.csv' % dn), index_col=0)
 
     # ----- PCA -----
     if args.pca:
@@ -52,8 +46,8 @@ def main():
             ncols=2, nrows=meta_len, figsize=(20, 5*meta_len), squeeze=False)
         for i in range(meta_len):
             meta_df = pd.concat([
-                all_res['original_x'][[args.meta_scatter[i]]],
-                all_res['ys'][['injection.order', 'class']],
+                all_res['Ori'][[args.meta_scatter[i]]],
+                all_res['Ys'][['injection.order', 'class']],
             ], axis=1)
             meta_df.plot.scatter(
                 x="injection.order", y=args.meta_scatter[i], c="class",
@@ -61,8 +55,8 @@ def main():
                 title='Original'
             )
             meta_df = pd.concat([
-                all_res['recons_no_batch'][[args.meta_scatter[i]]],
-                all_res['ys'][['injection.order', 'class']],
+                all_res['Rec_nobe'][[args.meta_scatter[i]]],
+                all_res['Ys'][['injection.order', 'class']],
             ], axis=1)
             meta_df.plot.scatter(
                 x="injection.order", y=args.meta_scatter[i], c="class",

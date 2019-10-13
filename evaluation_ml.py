@@ -52,8 +52,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('save', help="储存结果的文件夹")
     parser.add_argument(
-        '--ica', action='store_true', help='是否使用ica处理后的数据')
-    parser.add_argument(
         '--to', default='evaluation_ml_res',
         help='保存评价结果的json文件名，默认是evaluation_ml_res')
     parser.add_argument('--rand_seed', default=1234, type=int)
@@ -65,32 +63,54 @@ def main():
     json_res.update(deepcopy(args.__dict__))
 
     task_path = args.save
-    kfold = StratifiedKFold(10, random_state=args.rand_seed)
+    kfold = StratifiedKFold(10, random_state=args.rand_seed, shuffle=True)
+    kfold5 = StratifiedKFold(5, random_state=args.rand_seed, shuffle=True)
     # ----- 读取数据集 -----
-    data_names = ['original_x', 'ys', 'recons_no_batch']
+    data_names = ['Ori', 'Ys', 'Rec_nobe']
     all_res = {}
     for dn in data_names:
-        if dn == 'recons_no_batch' and args.ica:
-            file_name = dn + '_ica'
-        else:
-            file_name = dn
         all_res[dn] = pd.read_csv(
-            os.path.join(task_path, 'all_res_%s.csv' % file_name), index_col=0)
+            os.path.join(task_path, '%s.csv' % dn), index_col=0)
+        if dn != 'Ys':
+            all_res[dn] = all_res[dn].T
+    for dn in ['Ori', 'Rec_nobe']:
+        all_res[dn] = all_res[dn].loc[all_res['Ys'].index, :]
+    for dn in data_names:
         all_res[dn] = all_res[dn].values
+        # 得到的是ndarray
+
+    # ----- 准备使用的estimator -----
+    scale_rf = Pipeline([
+        ('scale', StandardScaler()),
+        ('rf', RandomForestClassifier(n_estimators=100))
+    ])
+    scale_pca = Pipeline([
+        ('scale', StandardScaler()),
+        ('pca', PCA(2))
+    ])
+    scale_pls = Pipeline([
+        ('scale', StandardScaler()),
+        ('pls', SelectFromModel(PLSwithVIP(3), threshold=1.)),
+    ])
+    scale_fdrpls_rf = Pipeline([
+        ('scale', StandardScaler()),
+        ('fdr', SelectFdr()),
+        ('pls', SelectFromModel(PLSwithVIP(3), threshold=1.)),
+        ('cls', RandomForestClassifier(100))
+    ])
+
+    # ----- subject index for select subject samples -----
+    subject_index = all_res['Ys'][:, -1] == 1
 
     # ----- 对原始数据和去除批次后的数据关于批次的分类交叉验证 -----
     print('关于batch label的10-cv评价')
     # 使用所有的数据, original
     # 进行10-CV
-    estimator = Pipeline([
-        ('scale', StandardScaler()),
-        ('rf', RandomForestClassifier(n_estimators=100))
-    ])
     cv_res_ori = cross_val_score(
-        estimator, all_res['original_x'], all_res['ys'][:, 1],
+        scale_rf, all_res['Ori'], all_res['Ys'][:, 1],
         cv=kfold, scoring='accuracy', n_jobs=12)
     cv_res_nobe = cross_val_score(
-        estimator, all_res['recons_no_batch'], all_res['ys'][:, 1],
+        scale_rf, all_res['Rec_nobe'], all_res['Ys'][:, 1],
         cv=kfold, scoring='accuracy', n_jobs=12)
     json_res['batch_label_cv'] = {
         'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
@@ -103,16 +123,11 @@ def main():
     print('')
 
     # ----- 使用轮廓系数来进行评价
-    pca = Pipeline([
-        ('scale', StandardScaler()),
-        ('pca', PCA(3))
-    ])
+    ori_res_pca = scale_pca.fit_transform(all_res['Ori'])
+    nobe_res_pca = scale_pca.fit_transform(all_res['Rec_nobe'])
 
-    ori_res_pca = pca.fit_transform(all_res['original_x'])
-    nobe_res_pca = pca.fit_transform(all_res['recons_no_batch'])
-
-    sil_score_ori = silhouette_score(ori_res_pca, all_res['ys'][:, 1])
-    sil_score_nobe = silhouette_score(nobe_res_pca, all_res['ys'][:, 1])
+    sil_score_ori = silhouette_score(ori_res_pca, all_res['Ys'][:, 1])
+    sil_score_nobe = silhouette_score(nobe_res_pca, all_res['Ys'][:, 1])
     json_res['sil_score_all'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
     print('所有样本轮廓系数评价')
     print('Original:')
@@ -120,11 +135,10 @@ def main():
     print('No Batch Effect:')
     print(sil_score_nobe)
 
-    subject_index = all_res['ys'][:, -1] == 1
     sil_score_ori = silhouette_score(
-        ori_res_pca[subject_index], all_res['ys'][subject_index, 1])
+        ori_res_pca[subject_index], all_res['Ys'][subject_index, 1])
     sil_score_nobe = silhouette_score(
-        nobe_res_pca[subject_index], all_res['ys'][subject_index, 1])
+        nobe_res_pca[subject_index], all_res['Ys'][subject_index, 1])
     json_res['sil_score_sub'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
     print('subject样本轮廓系数评价')
     print('Original:')
@@ -133,9 +147,9 @@ def main():
     print(sil_score_nobe)
 
     sil_score_ori = silhouette_score(
-        ori_res_pca[~subject_index], all_res['ys'][~subject_index, 1])
+        ori_res_pca[~subject_index], all_res['Ys'][~subject_index, 1])
     sil_score_nobe = silhouette_score(
-        nobe_res_pca[~subject_index], all_res['ys'][~subject_index, 1])
+        nobe_res_pca[~subject_index], all_res['Ys'][~subject_index, 1])
     json_res['sil_score_qc'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
     print('qc样本轮廓系数评价')
     print('Original:')
@@ -147,9 +161,9 @@ def main():
 
     # ----- 计算QC样本间的相关系数均值 -----
     print('QC数据计算平均的相关系数')
-    ori_cormat = np.corrcoef(all_res['original_x'][~subject_index])
+    ori_cormat = np.corrcoef(all_res['Ori'][~subject_index])
     ori_cormat_mean = ori_cormat[np.triu_indices_from(ori_cormat, k=1)].mean()
-    nobe_cormat = np.corrcoef(all_res['recons_no_batch'][~subject_index])
+    nobe_cormat = np.corrcoef(all_res['Rec_nobe'][~subject_index])
     nobe_cormat_mean = nobe_cormat[
         np.triu_indices_from(nobe_cormat, k=1)].mean()
     json_res['qc_cor'] = {'ori_cor_mean': ori_cormat_mean,
@@ -162,15 +176,19 @@ def main():
 
     print('')
 
-    # ----- 对原始数据和去除批次后的数据关于label的分类交叉验证 -----
     # 使用的是subject的数据
     subject_res = {k: v[subject_index, :] for k, v in all_res.items()}
+    X_ori = subject_res['Ori']
+    X_nobe = subject_res['Rec_nobe']
+    Y = subject_res['Ys'][:, 2]
+
+    # ----- 对原始数据和去除批次后的数据关于label的分类交叉验证 -----
     print('使用全部数据进行cancer vs no cancer的10-CV评价')
     cv_res_ori_label = cross_val_score(
-        estimator, subject_res['original_x'], subject_res['ys'][:, 2],
+        scale_rf, subject_res['Ori'], subject_res['Ys'][:, 2],
         cv=kfold, scoring='roc_auc', n_jobs=12)
     cv_res_nobe_label = cross_val_score(
-        estimator, subject_res['recons_no_batch'], subject_res['ys'][:, 2],
+        scale_rf, subject_res['Rec_nobe'], subject_res['Ys'][:, 2],
         cv=kfold, scoring='roc_auc', n_jobs=12)
     json_res['true_label_cv'] = {
         'ori': cv_res_ori_label.tolist(), 'nobe': cv_res_nobe_label.tolist()}
@@ -183,23 +201,13 @@ def main():
     print('')
 
     # ----- 变量筛选再进行交叉验证 -----
-    estimators = Pipeline([
-        ('fdr', SelectFdr()),
-        ('pls', SelectFromModel(PLSwithVIP(3), threshold=1.)),
-        ('cls', RandomForestClassifier(100))
-    ])
     # original
     print('先做变量筛选后进行cancer vs no cancer的10-CV评价')
-    X = subject_res['original_x']
-    Y = subject_res['ys'][:, 2]
-
     cv_res_ori_label = cross_val_score(
-        estimators, X, Y, cv=10, scoring='roc_auc')
-
+        scale_fdrpls_rf, X_ori, Y, cv=kfold, scoring='roc_auc')
     # no batch effect
-    X = subject_res['recons_no_batch']
     cv_res_nobe_label = cross_val_score(
-        estimators, X, Y, cv=kfold, scoring='roc_auc')
+        scale_fdrpls_rf, X_nobe, Y, cv=kfold, scoring='roc_auc')
 
     json_res['true_label_cv_feature_selection'] = {
         'ori': cv_res_ori_label.tolist(), 'nobe': cv_res_nobe_label.tolist()}
@@ -213,32 +221,14 @@ def main():
 
     # ----- 相同数量变量的AUC评价5-CV -----
     # original
-    print('使用PLS-VIP排序，看不同数量的features对应的AUCs')
-    X_ori = subject_res['original_x']
-    X_nobe = subject_res['recons_no_batch']
-    Y = subject_res['ys'][:, 2]
-
-    #  pls = PLSRegression(3)
-    #  pls.fit(X_ori, Y)
-    #  vips_ori = vip(pls)
-    #  vips_sort_indice_ori = np.argsort(vips_ori)[::-1]
-    #  pls.fit(X_nobe, Y)
-    #  vips_nobe = vip(pls)
-    #  vips_sort_indice_nobe = np.argsort(vips_nobe)[::-1]
-    rf = RandomForestClassifier(100)
-    rf.fit(X_ori, Y)
-    im_ori = rf.feature_importances_
+    print('使用RF-VIM排序，看不同数量的features对应的AUCs')
+    scale_rf.fit(X_ori, Y)
+    im_ori = scale_rf.named_steps['rf'].feature_importances_
     im_sort_indice_ori = np.argsort(im_ori)[::-1]
-    rf.fit(X_nobe, Y)
-    im_nobe = rf.feature_importances_
+    scale_rf.fit(X_nobe, Y)
+    im_nobe = scale_rf.named_steps['rf'].feature_importances_
     im_sort_indice_nobe = np.argsort(im_nobe)[::-1]
 
-    estimator = Pipeline([
-        ('scale', StandardScaler()),
-        ('cls', RandomForestClassifier(100))
-    ])
-
-    cv = StratifiedKFold(5, shuffle=True, random_state=args.rand_seed)
     features_num = np.arange(100, 1100, 100).tolist()
     ori_scores = []
     nobe_scores = []
@@ -246,15 +236,15 @@ def main():
         print('features number: %d' % fn)
         need_features = im_sort_indice_ori[:fn]
         X_part = X_ori[:, need_features]
-        cv_res_ori_part = cross_val_score(estimator, X_part, Y, cv=cv,
+        cv_res_ori_part = cross_val_score(scale_rf, X_part, Y, cv=kfold5,
                                           scoring='roc_auc', n_jobs=5)
         ori_scores.append(np.mean(cv_res_ori_part))
 
         need_features = im_sort_indice_nobe[:fn]
         X_part = X_nobe[:, need_features]
-        cv_res_ori_part = cross_val_score(estimator, X_part, Y, cv=cv,
+        cv_res_nobe_part = cross_val_score(scale_rf, X_part, Y, cv=kfold5,
                                           scoring='roc_auc', n_jobs=5)
-        nobe_scores.append(np.mean(cv_res_ori_part))
+        nobe_scores.append(np.mean(cv_res_nobe_part))
 
     json_res['equal_features_num'] = {
         'featurs_num': features_num,
@@ -273,13 +263,8 @@ def main():
     # ----- 相同数量变量的AUC评价5-CV, 但是是完全外部的 -----
     # original
     print('完成外部, 使用RF-VIM排序，看不同数量的features对应的AUCs')
-    X_ori = subject_res['original_x']
-    X_nobe = subject_res['recons_no_batch']
-    Y = subject_res['ys'][:, 2]
-
     res = {'ori': [], 'nobe': []}
 
-    cv = StratifiedKFold(5, shuffle=False, random_state=args.rand_seed)
     for i in tqdm(np.arange(100, 1100, 100)):
         estimator = Pipeline([
             ('feature_select', SelectFromModel(
@@ -289,11 +274,11 @@ def main():
             ('cls', RandomForestClassifier(100))
         ])
         # original
-        cv_res = cross_val_score(estimator, X_ori, Y, cv=cv,
+        cv_res = cross_val_score(estimator, X_ori, Y, cv=kfold5,
                                  scoring="roc_auc")
         res['ori'].append(np.mean(cv_res))
         # nobe
-        cv_res = cross_val_score(estimator, X_nobe, Y, cv=cv,
+        cv_res = cross_val_score(estimator, X_nobe, Y, cv=kfold5,
                                  scoring="roc_auc")
         res['nobe'].append(np.mean(cv_res))
     json_res['equal_features_num_2'] = res
