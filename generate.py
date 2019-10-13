@@ -195,7 +195,8 @@ def main():
             denoise=save_json['denoise'],
             reconst_loss=save_json['reconst_loss'],
             disc_weight_epoch=save_json['disc_weight_epoch'],
-            early_stop_check_num=save_json['early_stop_check_num']
+            early_stop_check_num=save_json['early_stop_check_num'],
+            #  disc_bn=save_json['disc_bn']
         )
         trainer.load_model(os.path.join(task_path, 'models.pth'))
         all_res = trainer.generate(

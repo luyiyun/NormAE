@@ -31,6 +31,8 @@ def main():
     for dn in data_names:
         all_res[dn] = pd.read_csv(
             os.path.join(task_path, '%s.csv' % dn), index_col=0)
+        if dn != 'Ys':
+            all_res[dn] = all_res[dn].T
 
     # ----- PCA -----
     if args.pca:

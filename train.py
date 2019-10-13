@@ -34,7 +34,7 @@ class BatchEffectTrainer:
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
         early_stop=False, net_type='simple', resnet_bottle_num=50,
         optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
-        disc_weight_epoch=500, early_stop_check_num=100
+        disc_weight_epoch=500, early_stop_check_num=100, disc_bn=True
     ):
         '''
         in_features: the number of input features;
@@ -77,6 +77,7 @@ class BatchEffectTrainer:
         self.denoise = denoise
         self.net_type = net_type
         self.resnet_bottle_num = resnet_bottle_num
+        self.disc_bn = disc_bn
         # 用于构建loss
         if len(disc_weight) == 2:
             # 如果disc weight有两个，则在iter phase阶段，disc weight(lambda)
@@ -367,7 +368,7 @@ class BatchEffectTrainer:
                 ).to(self.device),
                 'disc': SimpleCoder(
                     [self.bottle_num-self.be_num] + self.disc_hiddens +\
-                    [self.logit_dim], bn=False
+                    [self.logit_dim], bn=self.disc_bn
                 ).to(self.device)
             }
         else:
@@ -382,7 +383,8 @@ class BatchEffectTrainer:
                 ).to(device),
                 'disc': ResNet(
                     [self.bottle_num-self.be_num] + self.disc_hiddens +\
-                    [self.logit_dim], self.resnet_bottle_num
+                    [self.logit_dim], self.resnet_bottle_num,
+                    bn=self.disc_bn
                 ).to(device)
             }
         # 构建loss
@@ -548,7 +550,8 @@ def main():
         denoise=config.args.denoise,
         reconst_loss=config.args.reconst_loss,
         disc_weight_epoch=config.args.disc_weight_epoch,
-        early_stop_check_num=config.args.early_stop_check_num
+        early_stop_check_num=config.args.early_stop_check_num,
+        disc_bn=config.args.disc_bn
     )
     if config.args.load_model != '':
         trainer.load_model(config.args.load_model)

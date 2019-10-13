@@ -248,7 +248,7 @@ class OrderLoss(nn.Module):
                 return torch.tensor(0.).float()
             low_pred, high_pred = pred[low], pred[high]
             res = self.ce(
-                low_pred - high_pred,
+                high_pred - low_pred,
                 torch.ones(high_pred.size(0),
                            device=pred.device)
             )
