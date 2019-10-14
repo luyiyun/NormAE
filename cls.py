@@ -49,16 +49,16 @@ class RankPredictor:
     def __init__(self, loss_type, in_f, lr, device=torch.device('cuda:0')):
         self.model = nn.Sequential(
             nn.Linear(in_f, 2000),
-            #  nn.BatchNorm1d(2000),
+            nn.BatchNorm1d(2000),
             nn.LeakyReLU(),
             nn.Linear(2000, 2000),
-            #  nn.BatchNorm1d(2000),
+            nn.BatchNorm1d(2000),
             nn.LeakyReLU(),
             nn.Linear(2000, 1)
         ).to(device)
         self.criterion = OrderLoss(loss_type)
         self.optimizer = optim.Adam(
-            self.model.parameters(), lr)  # , betas=(0.5, 0.999)
+            self.model.parameters(), lr, betas=(0.5, 0.999))
         self.optimizer.zero_grad()
 
         self.history = {'train_loss': [], 'train_ndcg': [],
@@ -132,7 +132,7 @@ def main():
     datas = {'train': subject_dat, 'valid': qc_dat}
 
     trainer = RankPredictor(
-        loss_type='listnet', in_f=subject_dat.num_features,
+        loss_type=loss_type, in_f=subject_dat.num_features,
         lr=0.00001, device=torch.device('cuda:0')
     )
     history = trainer.fit(datas, bs=int(sys.argv[2]), nw=12, epoch=200)
