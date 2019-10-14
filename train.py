@@ -565,6 +565,7 @@ def main():
     if os.path.exists(config.args.save):
         dirname = input("%s has been already exists, please input New: " %
                         config.args.save)
+        os.makedirs(dirname)
     else:
         os.makedirs(config.args.save)
         dirname = config.args.save
