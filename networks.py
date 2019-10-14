@@ -198,6 +198,8 @@ class OrderLoss(nn.Module):
         self.loss_type=loss_type
         self.softmax = nn.Softmax(dim=0)
         self.ce = nn.BCEWithLogitsLoss()
+        self.log_softmax = nn.LogSoftmax(dim=0)
+        self.kld = nn.KLDivLoss(reduction='batchmean')
 
     def forward(self, pred, target, group=None):
         '''
@@ -210,18 +212,24 @@ class OrderLoss(nn.Module):
         target = target.squeeze().float()
         if self.loss_type == 'listnet':
             if group is None:
-                pred = self.softmax(pred)
-                target = self.softmax(target)
-                return -(target * pred.log()).sum()
+                #  pred = self.softmax(pred)
+                #  target = self.softmax(target)
+                #  return -(target * pred.log()).sum()
+                pred = self.log_softmax(pred)
+                target = self.log_softmax(target)
+                return self.kld(pred, target)
             else:
                 # 对于提供了group，则需要对每个group的值进行计算后再加在一起
                 unique_group = torch.unique(group)
                 res = 0.
                 for g in unique_group:
                     # 因为这个g是unique得到的，所以不会出现不存在的现象
-                    pred_g = self.softmax(pred[group == g])
-                    target_g = self.softmax(target[group == g])
-                    res -= (target_g * pred_g.log()).sum()
+                    #  pred_g = self.softmax(pred[group == g])
+                    #  target_g = self.softmax(target[group == g])
+                    #  res -= (target_g * pred_g.log()).sum()
+                    pred_g = self.log_softmax(pred[group == g])
+                    target_g = self.log_softmax(target[group == g])
+                    res += self.kld(pred_g, target_g)
                 return res
         elif self.loss_type == 'listmle':
             if group is None:
