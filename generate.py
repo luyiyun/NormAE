@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.utils.data as data
 from sklearn.decomposition import FastICA
 from sklearn.feature_selection import f_classif
+from sklearn.preprocessing import StandardScaler
 
 from datasets import get_demo_data, get_metabolic_data, ConcatData
 from transfer import Normalization
@@ -168,6 +169,7 @@ def main():
         print('')
     else:
         # ----- 得到生成的数据 -----
+        norm_new = Normalization(save_json['data_normalization'])
         trainer = BatchEffectTrainer(
             all_dat.num_features, save_json['bottle_num'],
             save_json['be_num'], batch_label_num=all_dat.num_batch_labels,
@@ -205,6 +207,7 @@ def main():
         # ----- 保存 -----
         for k, v in all_res.items():
             if k not in ['Ys', 'Codes']:
+                v, _ = norm_new(v, None)
                 v, _ = pre_transfer.inverse_transform(v, None)
                 v = v.T  # 列为样本，行为变量，读取时比较快速
                 v.index.name = 'meta.name'
