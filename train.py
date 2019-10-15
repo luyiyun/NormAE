@@ -34,7 +34,8 @@ class BatchEffectTrainer:
         decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
         early_stop=False, net_type='simple', resnet_bottle_num=50,
         optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
-        disc_weight_epoch=500, early_stop_check_num=100
+        disc_weight_epoch=500, early_stop_check_num=100,
+        dropouts=(0., 0., 0., 0.)
     ):
         '''
         in_features: the number of input features;
@@ -77,6 +78,7 @@ class BatchEffectTrainer:
         self.denoise = denoise
         self.net_type = net_type
         self.resnet_bottle_num = resnet_bottle_num
+        self.dropouts = dropouts
         # 用于构建loss
         if len(disc_weight) == 2:
             # 如果disc weight有两个，则在iter phase阶段，disc weight(lambda)
@@ -281,7 +283,7 @@ class BatchEffectTrainer:
                 # 计算hidden codes
                 batch_x = batch_x.to(self.device, torch.float)
                 hidden = self.models['encoder'](batch_x)
-                if first_sample is None:
+                if first_be_code is None:
                     first_be_code = hidden[0, :self.be_num]
                 codes.append(hidden)
                 # AE重建
@@ -365,22 +367,22 @@ class BatchEffectTrainer:
             self.models = {
                 'encoder': SimpleCoder(
                     [self.in_features] + self.encoder_hiddens +\
-                    [self.bottle_num]  # , dropout=0.5
+                    [self.bottle_num], dropout=self.dropouts[0]
                 ).to(self.device),
                 'decoder': SimpleCoder(
                     [self.bottle_num] + self.decoder_hiddens +\
-                    [self.in_features]
+                    [self.in_features], dropout=self.dropouts[1]
                 ).to(self.device),
             }
             if self.cls_logit_dim > 0:
                 self.models['disc_cls'] = SimpleCoder(
                     [self.bottle_num-self.be_num] + self.disc_hiddens +\
-                    [self.cls_logit_dim], bn=True
+                    [self.cls_logit_dim], bn=True, dropout=self.dropouts[2]
                 ).to(self.device)
             if self.order_logit_dim > 0:
                 self.models['disc_order'] = SimpleCoder(
                     [self.bottle_num-self.be_num] + self.disc_hiddens +\
-                    [self.order_logit_dim], bn=False
+                    [self.order_logit_dim], bn=False, dropout=self.dropouts[3]
                 ).to(self.device)
         else:
             raise NotImplementedError
@@ -593,6 +595,7 @@ def main():
         reconst_loss=config.args.reconst_loss,
         disc_weight_epoch=config.args.disc_weight_epoch,
         early_stop_check_num=config.args.early_stop_check_num,
+        dropouts=config.args.dropouts
     )
     if config.args.load_model != '':
         trainer.load_model(config.args.load_model)

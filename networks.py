@@ -119,9 +119,9 @@ class SimpleCoder(nn.Module):
             linear_layer = nn.Linear(u1, u2)
             one_layer.append(linear_layer)
             if i < (len(units) - 2):  # 因为units是包括了输入层的
-                one_layer.append(act)
                 if bn:
                     one_layer.append(nn.BatchNorm1d(u2))
+                one_layer.append(act)
                 if dropout > 0.0:
                     one_layer.append(nn.Dropout(dropout))
             one_layer = nn.Sequential(*one_layer)

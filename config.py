@@ -136,6 +136,10 @@ class Config:
         )
         self.parser.add_argument(
             '--early_stop_check_num', default=100, type=int)
+        self.parser.add_argument(
+            '--dropouts', default=(0.0, 0.0, 0.0, 0.0), type=float,
+            nargs=4
+        )
 
         self.args = self.parser.parse_args()
 
