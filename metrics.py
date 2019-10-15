@@ -17,12 +17,13 @@ class Loss(Meter):
         self.num_samples = 0
 
     def add(self, batch_loss, batch_size):
-        if self.tensor is None:
-            self.tensor = isinstance(batch_loss, torch.Tensor)
-        if self.tensor:
-            batch_loss = batch_loss.detach().cpu().numpy()
-        self.running_loss += batch_loss * batch_size
-        self.num_samples += batch_size
+        if batch_loss is not None:
+            if self.tensor is None:
+                self.tensor = isinstance(batch_loss, torch.Tensor)
+            if self.tensor:
+                batch_loss = batch_loss.detach().cpu().numpy()
+                self.running_loss += batch_loss * batch_size
+                self.num_samples += batch_size
 
     def value(self):
         if self.num_samples == 0:

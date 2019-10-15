@@ -136,9 +136,6 @@ class Config:
         )
         self.parser.add_argument(
             '--early_stop_check_num', default=100, type=int)
-        self.parser.add_argument(
-            '--disc_bn', action='store_true'
-        )
 
         self.args = self.parser.parse_args()
 
