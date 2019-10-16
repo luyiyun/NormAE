@@ -477,7 +477,7 @@ class BatchEffectTrainer:
                         hidden[:, self.be_num:])
                     loss_cls = self.criterions['cls'](
                         logit_cls, batch_y[:, 1])
-                    all_loss -= loss_cls
+                    all_loss -= self.disc_weight[self.e]*loss_cls
                     res[1] = loss_cls
                 if self.order_weight > 0.0:
                     if self.use_batch_for_order:
@@ -490,7 +490,7 @@ class BatchEffectTrainer:
                     loss_order = self.criterions['order'](
                         logit_order, batch_y[:, 0], group
                     )
-                    all_loss -= loss_order
+                    all_loss -= self.disc_weight[self.e]*loss_order
                     res[2] = loss_order
 
         all_loss.backward()
