@@ -262,32 +262,32 @@ def main():
 
     # ----- 相同数量变量的AUC评价5-CV, 但是是完全外部的 -----
     # original
-    print('完成外部, 使用RF-VIM排序，看不同数量的features对应的AUCs')
-    res = {'ori': [], 'nobe': []}
-
-    for i in tqdm(np.arange(100, 1100, 100)):
-        estimator = Pipeline([
-            ('feature_select', SelectFromModel(
-                RandomForestClassifier(100),
-                threshold=-np.inf, max_features=i
-            )),
-            ('cls', RandomForestClassifier(100))
-        ])
-        # original
-        cv_res = cross_val_score(estimator, X_ori, Y, cv=kfold5,
-                                 scoring="roc_auc")
-        res['ori'].append(np.mean(cv_res))
-        # nobe
-        cv_res = cross_val_score(estimator, X_nobe, Y, cv=kfold5,
-                                 scoring="roc_auc")
-        res['nobe'].append(np.mean(cv_res))
-    json_res['equal_features_num_2'] = res
-
-    print('Original:')
-    print(res['ori'])
-    print('No Batch Effect:')
-    print(res['nobe'])
-    print('')
+    #  print('完成外部, 使用RF-VIM排序，看不同数量的features对应的AUCs')
+    #  res = {'ori': [], 'nobe': []}
+    #
+    #  for i in tqdm(np.arange(100, 1100, 100)):
+    #      estimator = Pipeline([
+    #          ('feature_select', SelectFromModel(
+    #              RandomForestClassifier(100),
+    #              threshold=-np.inf, max_features=i
+    #          )),
+    #          ('cls', RandomForestClassifier(100))
+    #      ])
+    #      # original
+    #      cv_res = cross_val_score(estimator, X_ori, Y, cv=kfold5,
+    #                               scoring="roc_auc")
+    #      res['ori'].append(np.mean(cv_res))
+    #      # nobe
+    #      cv_res = cross_val_score(estimator, X_nobe, Y, cv=kfold5,
+    #                               scoring="roc_auc")
+    #      res['nobe'].append(np.mean(cv_res))
+    #  json_res['equal_features_num_2'] = res
+    #
+    #  print('Original:')
+    #  print(res['ori'])
+    #  print('No Batch Effect:')
+    #  print(res['nobe'])
+    #  print('')
 
 
     # 保存结果的dict以json的格式保存

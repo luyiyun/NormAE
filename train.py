@@ -274,7 +274,6 @@ class BatchEffectTrainer:
             iterator = tqdm(data_loader, 'encode and decode: ')
         else:
             iterator = data_loader
-        first_be_code = None
         with torch.no_grad():
             for batch_x, batch_y in iterator:
                 # X和Y都备份一次
@@ -282,16 +281,27 @@ class BatchEffectTrainer:
                 ys.append(batch_y)
                 # 计算hidden codes
                 batch_x = batch_x.to(self.device, torch.float)
+                batch_y = batch_y.to(self.device, torch.float)
                 hidden = self.models['encoder'](batch_x)
-                if first_be_code is None:
-                    first_be_code = hidden[0, :self.be_num]
                 codes.append(hidden)
                 # AE重建
-                x_rec.append(self.models['decoder'](hidden))
+                decoder_in = [hidden]
+                if self.cls_weight > 0.0:
+                    cls_in = torch.eye(
+                        self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
+                    decoder_in.append(cls_in)
+                if self.order_weight > 0.0:
+                    order_in = batch_y[:, [0]]
+                    decoder_in.append(order_in)
+                decoder_in = torch.cat(decoder_in, dim=1)
+                x_rec.append(self.models['decoder'](decoder_in))
                 # 去除批次重建
                 hidden_copy = hidden.clone()
-                hidden_copy[:, :self.be_num] = first_be_code
-                x_rec_nobe.append(self.models['decoder'](hidden_copy))
+                zero_tensor = torch.zeros((
+                    hidden.size(0), self.cls_logit_dim+self.order_logit_dim))
+                decoder_in_nobe = torch.cat(
+                    [hidden_copy, zero_tensor.to(hidden_copy)], dim=1)
+                x_rec_nobe.append(self.models['decoder'](decoder_in_nobe))
                 # 是否计算qc的loss，在训练的时候有用
                 if compute_qc_loss:
                     qc_index = batch_y[:, -1] == 0.
@@ -360,8 +370,10 @@ class BatchEffectTrainer:
         构建模型，损失函数，优化器以及lr_scheduler
         '''
         # according to cls_order_weight, choose classification criterion
-        self.cls_logit_dim = self.batch_label_num if self.cls_weight > 0.0 else 0
+        self.cls_logit_dim = self.batch_label_num \
+            if self.cls_weight > 0.0 else 0
         self.order_logit_dim = 1 if self.order_weight > 0.0 else 0
+        all_logit_dim = self.cls_logit_dim + self.order_logit_dim
         # 得到3个模型
         if self.net_type == 'simple':
             self.models = {
@@ -370,18 +382,18 @@ class BatchEffectTrainer:
                     [self.bottle_num], dropout=self.dropouts[0]
                 ).to(self.device),
                 'decoder': SimpleCoder(
-                    [self.bottle_num] + self.decoder_hiddens +\
+                    [all_logit_dim+self.bottle_num] + self.decoder_hiddens +\
                     [self.in_features], dropout=self.dropouts[1]
                 ).to(self.device),
             }
             if self.cls_logit_dim > 0:
                 self.models['disc_cls'] = SimpleCoder(
-                    [self.bottle_num-self.be_num] + self.disc_hiddens +\
+                    [self.bottle_num] + self.disc_hiddens +\
                     [self.cls_logit_dim], bn=True, dropout=self.dropouts[2]
                 ).to(self.device)
             if self.order_logit_dim > 0:
                 self.models['disc_order'] = SimpleCoder(
-                    [self.bottle_num-self.be_num] + self.disc_hiddens +\
+                    [self.bottle_num] + self.disc_hiddens +\
                     [self.order_logit_dim], bn=False, dropout=self.dropouts[3]
                 ).to(self.device)
         else:
@@ -465,7 +477,16 @@ class BatchEffectTrainer:
 
             hidden = self.models['encoder'](batch_x_noise)
             # decoder
-            batch_x_rec = self.models['decoder'](hidden)
+            decoder_in = [hidden]
+            if self.cls_weight > 0.0:
+                cls_in = torch.eye(
+                    self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
+                decoder_in.append(cls_in)
+            if self.order_weight > 0.0:
+                order_in = batch_y[:, [0]]
+                decoder_in.append(order_in)
+            decoder_in = torch.cat(decoder_in, dim=1)
+            batch_x_rec = self.models['decoder'](decoder_in)
             # reconstruction losses
             recon_loss = self.criterions['rec'](batch_x_rec, batch_x)
             res[0] = recon_loss
@@ -473,10 +494,8 @@ class BatchEffectTrainer:
             if self.phase == "iter_train":
                 if self.cls_weight > 0.0:
                     # discriminator, but not training
-                    logit_cls = self.models['disc_cls'](
-                        hidden[:, self.be_num:])
-                    loss_cls = self.criterions['cls'](
-                        logit_cls, batch_y[:, 1])
+                    logit_cls = self.models['disc_cls'](hidden)
+                    loss_cls = self.criterions['cls'](logit_cls, batch_y[:, 1])
                     all_loss -= self.disc_weight[self.e]*loss_cls
                     res[1] = loss_cls
                 if self.order_weight > 0.0:
@@ -484,9 +503,7 @@ class BatchEffectTrainer:
                         group = batch_y[:, 1]
                     else:
                         group = None
-                    logit_order = self.models['disc_order'](
-                        hidden[:, self.be_num:]
-                    )
+                    logit_order = self.models['disc_order'](hidden)
                     loss_order = self.criterions['order'](
                         logit_order, batch_y[:, 0], group
                     )
@@ -512,12 +529,11 @@ class BatchEffectTrainer:
                 batch_x_noise = batch_x + noise
             else:
                 batch_x_noise = batch_x
-
             hidden = self.models['encoder'](batch_x_noise)
         res = [None, None]
         with torch.enable_grad():
             if self.cls_weight > 0.0:
-                logit_cls = self.models['disc_cls'](hidden[:, self.be_num:])
+                logit_cls = self.models['disc_cls'](hidden)
                 adv_cls_loss = self.criterions['cls'](logit_cls, batch_y[:, 1])
                 adv_cls_loss.backward()
                 if self.clip_grad:
@@ -527,8 +543,7 @@ class BatchEffectTrainer:
                 self.optimizers['cls'].step()
                 res[0] = adv_cls_loss
             if self.order_weight > 0.0:
-                logit_order = self.models['disc_order'](
-                    hidden[:, self.be_num:])
+                logit_order = self.models['disc_order'](hidden)
                 if self.use_batch_for_order:
                     group = batch_y[:, 1]
                 else:
