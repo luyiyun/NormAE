@@ -285,23 +285,19 @@ class BatchEffectTrainer:
                 hidden = self.models['encoder'](batch_x)
                 codes.append(hidden)
                 # AE重建
-                decoder_in = [hidden]
+                batch_ys = []
                 if self.cls_weight > 0.0:
                     cls_in = torch.eye(
                         self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
-                    decoder_in.append(cls_in)
+                    batch_ys.append(cls_in)
                 if self.order_weight > 0.0:
                     order_in = batch_y[:, [0]]
-                    decoder_in.append(order_in)
-                decoder_in = torch.cat(decoder_in, dim=1)
-                x_rec.append(self.models['decoder'](decoder_in))
+                    batch_ys.append(order_in)
+                batch_ys = torch.cat(batch_ys, dim=1)
+                hidden_be = hidden + self.models['map'](batch_ys)
+                x_rec.append(self.models['decoder'](hidden_be))
                 # 去除批次重建
-                hidden_copy = hidden.clone()
-                zero_tensor = torch.zeros((
-                    hidden.size(0), self.cls_logit_dim+self.order_logit_dim))
-                decoder_in_nobe = torch.cat(
-                    [hidden_copy, zero_tensor.to(hidden_copy)], dim=1)
-                x_rec_nobe.append(self.models['decoder'](decoder_in_nobe))
+                x_rec_nobe.append(self.models['decoder'](hidden))
                 # 是否计算qc的loss，在训练的时候有用
                 if compute_qc_loss:
                     qc_index = batch_y[:, -1] == 0.
@@ -382,9 +378,12 @@ class BatchEffectTrainer:
                     [self.bottle_num], dropout=self.dropouts[0]
                 ).to(self.device),
                 'decoder': SimpleCoder(
-                    [all_logit_dim+self.bottle_num] + self.decoder_hiddens +\
+                    [self.bottle_num] + self.decoder_hiddens +\
                     [self.in_features], dropout=self.dropouts[1]
                 ).to(self.device),
+                'map': SimpleCoder(
+                    [all_logit_dim] + [100, 100] + [self.bottle_num],
+                ).to(self.device)
             }
             if self.cls_logit_dim > 0:
                 self.models['disc_cls'] = SimpleCoder(
@@ -430,7 +429,8 @@ class BatchEffectTrainer:
             'rec': optimizer_obj(
                 chain(
                     self.models['encoder'].parameters(),
-                    self.models['decoder'].parameters()
+                    self.models['decoder'].parameters(),
+                    self.models['map'].parameters()
                 ),
                 lr=self.rec_lr, weight_decay=self.l2
             )
@@ -477,16 +477,17 @@ class BatchEffectTrainer:
 
             hidden = self.models['encoder'](batch_x_noise)
             # decoder
-            decoder_in = [hidden]
+            batch_ys = []
             if self.cls_weight > 0.0:
                 cls_in = torch.eye(
                     self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
-                decoder_in.append(cls_in)
+                batch_ys.append(cls_in)
             if self.order_weight > 0.0:
                 order_in = batch_y[:, [0]]
-                decoder_in.append(order_in)
-            decoder_in = torch.cat(decoder_in, dim=1)
-            batch_x_rec = self.models['decoder'](decoder_in)
+                batch_ys.append(order_in)
+            batch_ys = torch.cat(batch_ys, dim=1)
+            hidden_be = hidden + self.models['map'](batch_ys)
+            batch_x_rec = self.models['decoder'](hidden_be)
             # reconstruction losses
             recon_loss = self.criterions['rec'](batch_x_rec, batch_x)
             res[0] = recon_loss
@@ -515,7 +516,8 @@ class BatchEffectTrainer:
             nn.utils.clip_grad_norm_(
                 chain(
                     self.models['encoder'].parameters(),
-                    self.models['decoder'].parameters()
+                    self.models['decoder'].parameters(),
+                    self.models['map'].parameters()
                 ), max_norm=1
             )
         self.optimizers['rec'].step()
