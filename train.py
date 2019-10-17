@@ -225,7 +225,7 @@ class BatchEffectTrainer:
             all_reses_dict, qc_loss = self.generate(
                 all_data, verbose=False, compute_qc_loss=True)
             # 对数据进行对应的pca
-            subject_pca, qc_pca = pca_for_dict(all_reses_dict)
+            subject_pca, qc_pca = pca_for_dict(all_reses_dict, 3)
             # plot pca
             pca_plot(subject_pca, qc_pca)
             # display in visdom
@@ -233,8 +233,7 @@ class BatchEffectTrainer:
             plt.close()
 
             ## early stopping
-            qc_dist = mm.mean_distance(
-                all_reses_dict['Rec_nobe'][all_reses_dict['Ys']['class']==0])
+            qc_dist = mm.mean_distance(qc_pca['Rec_nobe'])
             self.history['qc_rec_loss'].append(qc_loss)
             self.history['qc_distance'].append(qc_dist)
             self.visobj.add_epoch_loss(winname='qc_rec_loss', qc_loss=qc_loss)
