@@ -54,11 +54,13 @@ def pca_for_dict(all_dict, n_components=2, sub_qc_split=True):
     注意，没有被pca处理的all_dict中的部分，会原样返回。
     '''
     # 因为generate的结果改成了dict of dfs
+    ss = StandardScaler()
     pca = PCA(n_components)
     pca_dict = {}
     for k, v in all_dict.items():
         if k in ['Rec_nobe', 'Rec', 'Ori']:
-            pca_dict[k] = pca.fit_transform(v.values)
+            temp = ss.fit_transform(v.values)
+            pca_dict[k] = pca.fit_transform(temp)
         elif k == 'Ys':
             pca_dict[k] = v.values
     if sub_qc_split:

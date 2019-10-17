@@ -208,7 +208,7 @@ def main():
         for k, v in all_res.items():
             if k not in ['Ys', 'Codes']:
                 #  v, _ = norm_new(v, None)
-                v, _ = pre_transfer.inverse_transform(v, None)
+                #  v, _ = pre_transfer.inverse_transform(v, None)
                 v = v.T  # 列为样本，行为变量，读取时比较快速
                 v.index.name = 'meta.name'
             v.to_csv(os.path.join(task_path, '%s.csv' % k))

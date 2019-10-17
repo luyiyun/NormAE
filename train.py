@@ -35,7 +35,7 @@ class BatchEffectTrainer:
         early_stop=False, net_type='simple', resnet_bottle_num=50,
         optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
         disc_weight_epoch=500, early_stop_check_num=100,
-        dropouts=(0., 0., 0., 0.)
+        dropouts=(0., 0., 0., 0.), pre_transfer=None
     ):
         '''
         in_features: the number of input features;
@@ -122,6 +122,7 @@ class BatchEffectTrainer:
         # 其他属性
         self.visdom_port = visdom_port
         self.early_stop_check_num = early_stop_check_num
+        self.pre_transfer = pre_transfer
 
         # 构建模型、损失及优化器
         self._build_model()
@@ -330,6 +331,9 @@ class BatchEffectTrainer:
                         index=data_loader.dataset.X_df.index,
                         columns=data_loader.dataset.X_df.columns
                     )
+                    if self.pre_transfer is not None:
+                        temp = self.pre_transfer.inverse_transform(res[k], None)
+                        res[k] = temp[0]
                 else:
                     res[k] = pd.DataFrame(
                         v.detach().cpu().numpy(),
@@ -624,7 +628,8 @@ def main():
         reconst_loss=config.args.reconst_loss,
         disc_weight_epoch=config.args.disc_weight_epoch,
         early_stop_check_num=config.args.early_stop_check_num,
-        dropouts=config.args.dropouts
+        dropouts=config.args.dropouts,
+        pre_transfer=pre_transfer
     )
     if config.args.load_model != '':
         trainer.load_model(config.args.load_model)
