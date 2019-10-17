@@ -379,7 +379,8 @@ class BatchEffectTrainer:
                 ).to(self.device),
                 'decoder': SimpleCoder(
                     [self.bottle_num] + self.decoder_hiddens +\
-                    [self.in_features], dropout=self.dropouts[1]
+                    [self.in_features], dropout=self.dropouts[1],
+                    final_act=nn.Sigmoid() if self.rec_type == 'ce' else None
                 ).to(self.device),
                 'map': SimpleCoder(
                     [all_logit_dim] + [100, 100] + [self.bottle_num],
@@ -413,11 +414,18 @@ class BatchEffectTrainer:
             }
         # 构建loss
         self.criterions = {
-            'rec': nn.L1Loss() if self.rec_type == 'mae' else nn.MSELoss(),
             'cls': ClswithLabelSmoothLoss(
                 self.label_smooth, self.cls_leastsquare),
             'order': OrderLoss(self.order_losstype)
         }
+        if self.rec_type == 'mae':
+            self.criterions['rec'] = nn.L1Loss()
+        elif self.rec_type == 'mse':
+            self.criterions['rec'] = nn.MSELoss()
+        elif self.rec_type == 'ce':
+            self.criterions['rec'] = nn.BCELoss()
+        else:
+            raise ValueError
         # 构建optim
         if self.optimizer == 'rmsprop':
             optimizer_obj = partial(optim.RMSprop, momentum=0.5)
@@ -472,6 +480,7 @@ class BatchEffectTrainer:
             if self.denoise is not None and self.denoise > 0.0:
                 noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
                 batch_x_noise = batch_x + noise
+                batch_x_noise = batch_x_noise.clamp(0, 1)
             else:
                 batch_x_noise = batch_x
 
@@ -529,6 +538,7 @@ class BatchEffectTrainer:
             if self.denoise is not None and self.denoise > 0.0:
                 noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
                 batch_x_noise = batch_x + noise
+                batch_x_noise = batch_x_noise.clamp(0, 1)
             else:
                 batch_x_noise = batch_x
             hidden = self.models['encoder'](batch_x_noise)
@@ -568,6 +578,8 @@ def main():
     # config
     config = Config()
     config.show()
+    if config.args.reconst_loss == 'ce' and config.args.data_normalization != 'minmax':
+        raise ValueError
 
     # ----- 读取数据 -----
     pre_transfer = Normalization(config.args.data_normalization)
