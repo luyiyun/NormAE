@@ -233,7 +233,8 @@ class BatchEffectTrainer:
             plt.close()
 
             ## early stopping
-            qc_dist = mm.mean_distance(qc_pca['Rec_nobe'])
+            qc_dist = mm.mean_distance(
+                all_reses_dict['Rec_nobe'][all_reses_dict['Ys']['class']==0])
             self.history['qc_rec_loss'].append(qc_loss)
             self.history['qc_distance'].append(qc_dist)
             self.visobj.add_epoch_loss(winname='qc_rec_loss', qc_loss=qc_loss)
