@@ -140,6 +140,9 @@ class Config:
             '--dropouts', default=(0.0, 0.0, 0.0, 0.0), type=float,
             nargs=4
         )
+        self.parser.add_argument(
+            '--visdom_env', default='main'
+        )
 
         self.args = self.parser.parse_args()
 

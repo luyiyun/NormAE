@@ -35,7 +35,7 @@ class BatchEffectTrainer:
         early_stop=False, net_type='simple', resnet_bottle_num=50,
         optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
         disc_weight_epoch=500, early_stop_check_num=100,
-        dropouts=(0., 0., 0., 0.), pre_transfer=None
+        dropouts=(0., 0., 0., 0.), pre_transfer=None, visdom_env='main'
     ):
         '''
         in_features: the number of input features;
@@ -121,6 +121,7 @@ class BatchEffectTrainer:
         self.early_stop = early_stop
         # 其他属性
         self.visdom_port = visdom_port
+        self.visdom_env = visdom_env
         self.early_stop_check_num = early_stop_check_num
         self.pre_transfer = pre_transfer
 
@@ -134,7 +135,7 @@ class BatchEffectTrainer:
             'rec_loss': [], 'qc_rec_loss': [], 'qc_distance': []
         }
         # 可视化工具
-        self.visobj = VisObj(self.visdom_port)
+        self.visobj = VisObj(self.visdom_port, env=self.visdom_env)
         # 提前停止使用
         self.early_stop_objs = {
             'best_epoch': -1, 'best_qc_loss': 1000, 'best_qc_distance': 1000,
@@ -246,6 +247,8 @@ class BatchEffectTrainer:
             bar.update(1)
         bar.close()
 
+        if self.visdom_env != 'main':
+            self.visobj.vis.save([self.visdom_env])
         if self.early_stop:
             print('')
             print('The best epoch is %d' % self.early_stop_objs['best_epoch'])
@@ -387,7 +390,7 @@ class BatchEffectTrainer:
                     final_act=nn.Sigmoid() if self.rec_type == 'ce' else None
                 ).to(self.device),
                 'map': SimpleCoder(
-                    [all_logit_dim] + [100, 100] + [self.bottle_num],
+                    [all_logit_dim] + [500] + [self.bottle_num],
                 ).to(self.device)
             }
             if self.cls_logit_dim > 0:
@@ -629,7 +632,8 @@ def main():
         disc_weight_epoch=config.args.disc_weight_epoch,
         early_stop_check_num=config.args.early_stop_check_num,
         dropouts=config.args.dropouts,
-        pre_transfer=pre_transfer
+        pre_transfer=pre_transfer,
+        visdom_env=config.args.visdom_env
     )
     if config.args.load_model != '':
         trainer.load_model(config.args.load_model)
