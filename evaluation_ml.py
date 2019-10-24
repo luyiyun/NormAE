@@ -105,7 +105,7 @@ def main():
     ])
     scale_pls_noselect = Pipeline({
         ("scale", StandardScaler()),
-        ("pls", PLSwithVIP(3))
+        ("pls", PLSRegression(3))
     })
     #  scale_fdrpls_rf = Pipeline([
     #      ('scale', StandardScaler()),
@@ -340,10 +340,10 @@ def main():
     # original
     print('使用RF-VIM排序，看不同数量的features对应的AUCs')
     scale_pls_noselect.fit(X_ori, Y)
-    im_ori = scale_pls_noselect.named_steps['pls'].feature_importances_
+    im_ori = vip(scale_pls_noselect.named_steps['pls'])
     im_sort_indice_ori = np.argsort(im_ori)[::-1]
     scale_pls_noselect.fit(X_nobe, Y)
-    im_nobe = scale_pls_noselect.named_steps['pls'].feature_importances_
+    im_nobe = vip(scale_pls_noselect.named_steps['pls'])
     im_sort_indice_nobe = np.argsort(im_nobe)[::-1]
 
     features_num = np.arange(100, 1100, 100).tolist()
