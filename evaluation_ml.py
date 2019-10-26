@@ -1,20 +1,18 @@
 import os
+from copy import deepcopy
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
-import torch
-from tqdm import tqdm
+import scipy.spatial.distance as dist
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import SelectFdr, SelectFromModel
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import silhouette_score, roc_auc_score
 from sklearn.decomposition import PCA
-
-from metrics import mean_distance
 
 
 def vip(model):
@@ -46,6 +44,54 @@ class PLSwithVIP(PLSRegression):
         self.feature_importances_ = vip(self)
         return res
 
+
+def mean_cor(arr):
+    cormat = np.corrcoef(arr)
+    return cormat[np.triu_indices_from(cormat, k=1)].mean()
+
+
+def mean_distance(arr):
+    distlist = dist.pdist(arr)
+    return np.mean(distlist)
+
+
+def one_fold(selects, cls, X, Y, train, test, score):
+    new_selects = deepcopy(selects)
+    new_cls = deepcopy(cls)
+    Y_train, Y_test = Y[train], Y[test]
+    X_train, X_test = X[train], X[test]
+    select_mask = []
+    for select in new_selects:
+        select.fit(X_train, Y_train)
+        select_mask.append(select.get_support())
+    select_mask = np.stack(select_mask, axis=1).all(axis=1)
+    new_cls.fit(X_train[:, select_mask], Y_train)
+    pred_test = new_cls.predict_proba(X_test[:, select_mask])
+    score_test = score(Y_test, pred_test[:, -1])
+    return score_test, int(select_mask.sum())
+
+
+def SelectClsCv(selects, cls, kfold, X, Y, score=roc_auc_score, n_jobs=10):
+    pool = Pool(processes=n_jobs)
+    results = []
+    for train, test in kfold.split(X, Y):
+        results.append(
+            pool.apply_async(
+                one_fold, (selects, cls, X, Y, train, test, score)
+            )
+        )
+    pool.close()
+    pool.join()
+
+    scores = []
+    feature_nums = []
+    for res in results:
+        ss, ff = res.get()
+        scores.append(ss)
+        feature_nums.append(ff)
+    return scores, feature_nums
+
+
 def main():
     from copy import deepcopy
     import json
@@ -60,324 +106,193 @@ def main():
     parser.add_argument('--rand_seed', default=1234, type=int)
     parser.add_argument('--estimator', default='rf')
     parser.add_argument("--ori_eval", action="store_true")
+    parser.add_argument("--njobs", default=10)
     args = parser.parse_args()
     print(args)
     print('')
 
+    # ----- 准备保存数据的dict -----
     json_res = {}
     json_res.update(deepcopy(args.__dict__))
 
-    task_path = args.save
-    kfold = StratifiedKFold(10, random_state=args.rand_seed, shuffle=True)
-    kfold5 = StratifiedKFold(5, random_state=args.rand_seed, shuffle=True)
     # ----- 读取数据集 -----
-    data_names = ['Ori', 'Ys', 'Rec_nobe']
-    all_res = {}
+    scale = StandardScaler()
+    task_path = args.save
+    data_names = ['Ori', "Rec_nobe"]
+    Y_name = "Ys"
+    Y = pd.read_csv(os.path.join(task_path, "%s.csv" % Y_name), index_col=0)
+    dats = {}
+    unscale_dats = {}
     for dn in data_names:
-        all_res[dn] = pd.read_csv(
-            os.path.join(task_path, '%s.csv' % dn), index_col=0)
-        if dn != 'Ys':
-            all_res[dn] = all_res[dn].T
-    for dn in ['Ori', 'Rec_nobe']:
-        all_res[dn] = all_res[dn].loc[all_res['Ys'].index, :]
-    for dn in data_names:
-        all_res[dn] = all_res[dn].values
-        # 得到的是ndarray
+        dat = pd.read_csv(
+            os.path.join(task_path, '%s.csv' % dn), index_col=0).T
+        dat = dat.loc[Y.index, :]
+        dat = dat.values  # 得到的是ndarray
+        unscale_dats[dn] = dat  # 保存没有进行scale的数据，做sil score和cor
+        dats[dn] = scale.fit_transform(dat)  # 后面都要用到，这里直接标准化了
+
+    # subject index for select subject samples
+    subject_index = (Y.loc[:, "class"] == 1).values
+
+    # 后面会只使用subject的数据，这里先准备一下
+    sub_dats = {k: v[subject_index, :] for k, v in dats.items()}
+    sub_Y = Y.loc[subject_index, "group"].values
 
     # ----- 准备使用的estimator -----
+    kfold = StratifiedKFold(10, random_state=args.rand_seed, shuffle=True)
+    kfold5 = StratifiedKFold(5, random_state=args.rand_seed, shuffle=True)
     cls_estimator = RandomForestClassifier(500, random_state=args.rand_seed) \
         if args.estimator == 'rf' else SVC(probability=True)
-    scale_cls = Pipeline([
-        ('scale', StandardScaler()),
-        ('cls', cls_estimator)
-    ])
-    scale_pca = Pipeline([
-        ('scale', StandardScaler()),
-        ('pca', PCA(2))
-    ])
-    scale_fdr = Pipeline({
-        ("scale", StandardScaler()),
-        ("fdr", SelectFdr()),
-    })
-    scale_pls = Pipeline([
-        ('scale', StandardScaler()),
-        ('pls', SelectFromModel(PLSwithVIP(3), threshold=1.)),
-    ])
-    scale_pls_noselect = Pipeline({
-        ("scale", StandardScaler()),
-        ("pls", PLSRegression(3))
-    })
-    #  scale_fdrpls_rf = Pipeline([
-    #      ('scale', StandardScaler()),
-    #      ('fdr', SelectFdr()),
-    #      ('pls', SelectFromModel(PLSwithVIP(3), threshold=1.)),
-    #      ('cls', RandomForestClassifier(100))
-    #  ])
-
-    # ----- subject index for select subject samples -----
-    subject_index = all_res['Ys'][:, -1] == 1
+    cls = cls_estimator
+    pca = PCA(3)
+    fdr = SelectFdr()
+    pls = SelectFromModel(PLSwithVIP(3), threshold=1.)
+    pls_noselect = PLSRegression(3)
 
     # ----- 对原始数据和去除批次后的数据关于批次的分类交叉验证 -----
     print('关于batch label的10-cv评价')
     # 使用所有的数据, original
     # 进行10-CV
-    cv_res_ori = cross_val_score(
-        scale_cls, all_res['Ori'], all_res['Ys'][:, 1],
-        cv=kfold, scoring='accuracy', n_jobs=12)
-    cv_res_nobe = cross_val_score(
-        scale_cls, all_res['Rec_nobe'], all_res['Ys'][:, 1],
-        cv=kfold, scoring='accuracy', n_jobs=12)
-    json_res['batch_label_cv'] = {
-        'ori': cv_res_ori.tolist(), 'nobe': cv_res_nobe.tolist()}
-    print('Original:')
-    print(cv_res_ori)
-    print(np.mean(cv_res_ori))
-    print('No Batch Effect:')
-    print(cv_res_nobe)
-    print(np.mean(cv_res_nobe))
+    json_res["batch_label_cv"] = {}
+    for dn, dat in dats.items():
+        cv_res = cross_val_score(
+            cls, dat, Y.loc[:, "batch"].values,
+            cv=kfold, scoring='accuracy', n_jobs=args.njobs)
+        json_res['batch_label_cv'][dn] = cv_res.tolist()
+        print('%s:' % dn)
+        print(cv_res)
+        print(np.mean(cv_res))
     print('')
 
     # ----- 使用轮廓系数来进行评价
-    ori_res_pca = scale_pca.fit_transform(all_res['Ori'])
-    nobe_res_pca = scale_pca.fit_transform(all_res['Rec_nobe'])
+    print('计算关于batch label的轮廓系数')
+    json_res['sil_score_all'] = {}
+    json_res['sil_score_sub'] = {}
+    json_res['sil_score_qc'] = {}
+    for dn, dat in unscale_dats.items():
+        pca_res = pca.fit_transform(dat)
+        sil_score_all = silhouette_score(pca_res, Y.loc[:, "batch"].values)
+        sil_score_sub = silhouette_score(
+            pca_res[subject_index], Y.loc[subject_index, "batch"].values)
+        sil_score_qc = silhouette_score(
+            pca_res[~subject_index], Y.loc[~subject_index, "batch"].values)
+        print("%s: " % dn)
+        print("For all sample: %.4f" % sil_score_all)
+        print("For subject sample: %.4f" % sil_score_sub)
+        print("For qc sample: %.4f" % sil_score_qc)
 
-    sil_score_ori = silhouette_score(ori_res_pca, all_res['Ys'][:, 1])
-    sil_score_nobe = silhouette_score(nobe_res_pca, all_res['Ys'][:, 1])
-    json_res['sil_score_all'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
-    print('所有样本轮廓系数评价')
-    print('Original:')
-    print(sil_score_ori)
-    print('No Batch Effect:')
-    print(sil_score_nobe)
-
-    sil_score_ori = silhouette_score(
-        ori_res_pca[subject_index], all_res['Ys'][subject_index, 1])
-    sil_score_nobe = silhouette_score(
-        nobe_res_pca[subject_index], all_res['Ys'][subject_index, 1])
-    json_res['sil_score_sub'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
-    print('subject样本轮廓系数评价')
-    print('Original:')
-    print(sil_score_ori)
-    print('No Batch Effect:')
-    print(sil_score_nobe)
-
-    sil_score_ori = silhouette_score(
-        ori_res_pca[~subject_index], all_res['Ys'][~subject_index, 1])
-    sil_score_nobe = silhouette_score(
-        nobe_res_pca[~subject_index], all_res['Ys'][~subject_index, 1])
-    json_res['sil_score_qc'] = {'ori': sil_score_ori, 'nobe': sil_score_nobe}
-    print('qc样本轮廓系数评价')
-    print('Original:')
-    print(sil_score_ori)
-    print('No Batch Effect:')
-    print(sil_score_nobe)
-
+        json_res['sil_score_all'][dn] = sil_score_all
+        json_res['sil_score_sub'][dn] = sil_score_sub
+        json_res['sil_score_qc'][dn] = sil_score_qc
     print('')
-
 
     # ----- 计算样本间的距离均值 -----
-    print('QC数据计算平均的距离')
-    ori_qc_dist = mean_distance(ori_res_pca[~subject_index])
-    nobe_qc_dist = mean_distance(nobe_res_pca[~subject_index])
-    json_res['qc_dist'] = {'ori': ori_qc_dist, 'nobe': nobe_qc_dist}
-    print('qc样本mean of dist')
-    print('Original:')
-    print(ori_qc_dist)
-    print('No Batch Effect:')
-    print(nobe_qc_dist)
-    print('')
-    # ----- 计算subject样本间的相关系数均值 -----
-    print('Subject数据计算平均的距离')
-    ori_sub_dist = mean_distance(ori_res_pca[subject_index])
-    nobe_sub_dist = mean_distance(nobe_res_pca[subject_index])
-    json_res['sub_dist'] = {'ori': ori_sub_dist, 'nobe': nobe_sub_dist}
-    print('subject样本mean of dist')
-    print('Original:')
-    print(ori_sub_dist)
-    print('No Batch Effect:')
-    print(nobe_sub_dist)
+    print('计算在3维主成分空间上的样本平均距离')
+    json_res['dist_all'] = {}
+    json_res['dist_sub'] = {}
+    json_res['dist_qc'] = {}
+    for dn, dat in dats.items():
+        pca_dat = pca.fit_transform(dat)
+        all_dist = mean_distance(pca_dat)
+        sub_dist = mean_distance(pca_dat[subject_index])
+        qc_dist = mean_distance(pca_dat[~subject_index])
+        print("%s: " % dn)
+        print("For all sample: %.4f" % all_dist)
+        print("For subject sample: %.4f" % sub_dist)
+        print("For qc sample: %.4f" % qc_dist)
+
+        json_res['dist_all'][dn] = all_dist
+        json_res['dist_sub'][dn] = sub_dist
+        json_res['dist_qc'][dn] = qc_dist
     print('')
 
+    # ----- 计算样本间的相关系数均值 -----
+    print('计算样本间的平均相关系数')
+    json_res['cor_all'] = {}
+    json_res['cor_sub'] = {}
+    json_res['cor_qc'] = {}
+    for dn, dat in unscale_dats.items():
+        all_cor = mean_cor(dat)
+        sub_cor = mean_cor(dat[subject_index])
+        qc_cor = mean_cor(dat[~subject_index])
+        print("%s: " % dn)
+        print("For all sample: %.4f" % all_cor)
+        print("For subject sample: %.4f" % sub_cor)
+        print("For qc sample: %.4f" % qc_cor)
 
-    # ----- 计算QC样本间的相关系数均值 -----
-    print('QC数据计算平均的相关系数')
-    ori_cormat = np.corrcoef(all_res['Ori'][~subject_index])
-    ori_cormat_mean = ori_cormat[np.triu_indices_from(ori_cormat, k=1)].mean()
-    nobe_cormat = np.corrcoef(all_res['Rec_nobe'][~subject_index])
-    nobe_cormat_mean = nobe_cormat[
-        np.triu_indices_from(nobe_cormat, k=1)].mean()
-    json_res['qc_cor'] = {'ori_cor_mean': ori_cormat_mean,
-                          'nobe_cor_mean': nobe_cormat_mean}
-    print('qc样本mean of cor')
-    print('Original:')
-    print(ori_cormat_mean)
-    print('No Batch Effect:')
-    print(nobe_cormat_mean)
-
+        json_res['cor_all'][dn] = all_cor
+        json_res['cor_sub'][dn] = sub_cor
+        json_res['cor_qc'][dn] = qc_cor
     print('')
-
-    # ----- 计算subject样本间的相关系数均值 -----
-    print('subject数据计算平均的相关系数')
-    ori_cormat = np.corrcoef(all_res['Ori'][subject_index])
-    ori_cormat_mean = ori_cormat[np.triu_indices_from(ori_cormat, k=1)].mean()
-    nobe_cormat = np.corrcoef(all_res['Rec_nobe'][subject_index])
-    nobe_cormat_mean = nobe_cormat[
-        np.triu_indices_from(nobe_cormat, k=1)].mean()
-    json_res['sub_cor'] = {'ori_cor_mean': ori_cormat_mean,
-                          'nobe_cor_mean': nobe_cormat_mean}
-    print('subject样本mean of cor')
-    print('Original:')
-    print(ori_cormat_mean)
-    print('No Batch Effect:')
-    print(nobe_cormat_mean)
-
-    print('')
-
-
-    # 使用的是subject的数据
-    subject_res = {k: v[subject_index, :] for k, v in all_res.items()}
-    X_ori = subject_res['Ori']
-    X_nobe = subject_res['Rec_nobe']
-    Y = subject_res['Ys'][:, 2]
 
     # ----- 对原始数据和去除批次后的数据关于label的分类交叉验证 -----
     print('使用全部数据进行cancer vs no cancer的10-CV评价')
-    cv_res_ori_label = cross_val_score(
-        scale_cls, X_ori, Y, cv=kfold, scoring='roc_auc', n_jobs=12)
-    cv_res_nobe_label = cross_val_score(
-        scale_cls, X_nobe, Y, cv=kfold, scoring='roc_auc', n_jobs=12)
-    json_res['true_label_cv'] = {
-        'ori': cv_res_ori_label.tolist(), 'nobe': cv_res_nobe_label.tolist()}
-    print('Original:')
-    print(cv_res_ori_label)
-    print(np.mean(cv_res_ori_label))
-    print('No Batch Effect:')
-    print(cv_res_nobe_label)
-    print(np.mean(cv_res_nobe_label))
+    json_res['group_label_cv'] = {}
+    for dn, dat in sub_dats.items():
+        cv_res = cross_val_score(
+            cls, dat, sub_Y, cv=kfold,
+            scoring='roc_auc', n_jobs=args.njobs)
+        json_res['group_label_cv'][dn] = cv_res.tolist()
+        print("%s: " % dn)
+        print(cv_res)
+        print(np.mean(cv_res))
     print('')
 
     # ----- 变量筛选再进行交叉验证 -----
     print('先做变量筛选后进行cancer vs no cancer的10-CV评价')
-    cv_res_ori_label = []
-    cv_res_nobe_label = []
-    ori_selected_nums = []
-    nobe_selected_nums = []
-    for train, test in kfold.split(X_ori, Y):
-        Y_train, Y_test = Y[train], Y[test]
-        # ori
-        X_ori_train, X_ori_test = X_ori[train, :], X_ori[test, :]
-        scale_fdr.fit(X_ori_train, Y_train)
-        scale_pls.fit(X_ori_train, Y_train)
-        select_mask = scale_fdr.named_steps['fdr'].get_support() & \
-            scale_pls.named_steps['pls'].get_support()
-        scale_cls.fit(X_ori_train[:, select_mask], Y_train)
-        pred_test = scale_cls.predict_proba(X_ori_test[:, select_mask])
-        roc_ori = roc_auc_score(Y_test, pred_test[:, -1])
-        cv_res_ori_label.append(roc_ori)
-        ori_selected_nums.append(int(select_mask.sum()))
-
-        # nobe
-        X_nobe_train, X_nobe_test = X_nobe[train, :], X_nobe[test, :]
-        scale_fdr.fit(X_nobe_train, Y_train)
-        scale_pls.fit(X_nobe_train, Y_train)
-        select_mask = scale_fdr.named_steps['fdr'].get_support() & \
-            scale_pls.named_steps['pls'].get_support()
-        scale_cls.fit(X_nobe_train[:, select_mask], Y_train)
-        pred_test = scale_cls.predict_proba(X_nobe_test[:, select_mask])
-        roc_nobe = roc_auc_score(Y_test, pred_test[:, -1])
-        cv_res_nobe_label.append(roc_nobe)
-        nobe_selected_nums.append(int(select_mask.sum()))
-
-
-    json_res['true_label_cv_feature_selection'] = {
-        'ori': cv_res_ori_label, 'nobe': cv_res_nobe_label,
-        'ori_feature_num': ori_selected_nums,
-        'nobe_feature_num': nobe_selected_nums
-    }
-    print('Original:')
-    print(cv_res_ori_label)
-    print(np.mean(cv_res_ori_label))
-    print('No Batch Effect:')
-    print(cv_res_nobe_label)
-    print(np.mean(cv_res_nobe_label))
-    print('Original feature num:')
-    print(ori_selected_nums)
-    print(np.mean(ori_selected_nums))
-    print('No Batch Effect feature num:')
-    print(nobe_selected_nums)
-    print(np.mean(nobe_selected_nums))
-    print('')
+    json_res['group_selected_cv'] = {}
+    json_res["group_selected_features"] = {}
+    for dn, dat in sub_dats.items():
+        cv_res, num_features = SelectClsCv(
+            [fdr, pls], cls, kfold, dat, sub_Y, score=roc_auc_score,
+            n_jobs=args.njobs)
+        json_res['group_selected_cv'][dn] = cv_res
+        json_res['group_selected_features'][dn] = num_features
+        print("%s: " % dn)
+        print(cv_res)
+        print(np.mean(cv_res))
+        print(num_features)
+        print(np.mean(num_features))
+    print("")
 
     # ----- 变量筛选再进行交叉验证Deng -----
     print('先做变量筛选后(deng)进行cancer vs no cancer的10-CV评价')
-    scale_fdr.fit(X_ori, Y)
-    scale_pls.fit(X_ori, Y)
-    select_mask = scale_fdr.named_steps['fdr'].get_support() & \
-        scale_pls.named_steps['pls'].get_support()
-    X_selected = X_ori[:, select_mask]
-    cv_res_ori_deng = cross_val_score(
-        scale_cls, X_selected, Y, cv=kfold, scoring='roc_auc', n_jobs=12)
-
-    scale_fdr.fit(X_nobe, Y)
-    scale_pls.fit(X_nobe, Y)
-    select_mask = scale_fdr.named_steps['fdr'].get_support() & \
-        scale_pls.named_steps['pls'].get_support()
-    X_selected = X_nobe[:, select_mask]
-    cv_res_nobe_deng = cross_val_score(
-        scale_cls, X_selected, Y, cv=kfold, scoring='roc_auc', n_jobs=12)
-
-    json_res['true_label_cv_feature_selection_deng'] = {
-        'ori': cv_res_ori_deng.tolist(), 'nobe': cv_res_nobe_deng.tolist()}
-    print('Original:')
-    print(cv_res_ori_deng)
-    print(np.mean(cv_res_ori_deng))
-    print('No Batch Effect:')
-    print(cv_res_nobe_deng)
-    print(np.mean(cv_res_nobe_deng))
-    print('')
+    json_res["group_selected_cv_deng"] = {}
+    json_res["group_selected_features_deng"] = {}
+    for dn, dat in sub_dats.items():
+        fdr.fit(dat, sub_Y)
+        pls.fit(dat, sub_Y)
+        select_mask = fdr.get_support() & pls.get_support()
+        cv_res = cross_val_score(
+            cls, dat[:, select_mask], sub_Y,
+            cv=kfold, scoring='roc_auc', n_jobs=args.njobs)
+        json_res['group_selected_cv_deng'][dn] = cv_res.tolist()
+        json_res["group_selected_features_deng"][dn] = int(select_mask.sum())
+        print("%s: " % dn)
+        print(cv_res)
+        print(np.mean(cv_res))
+        print(int(select_mask.sum()))
+    print("")
 
     # ----- 相同数量变量的AUC评价5-CV -----
-    # original
-    print('使用RF-VIM排序，看不同数量的features对应的AUCs')
-    scale_pls_noselect.fit(X_ori, Y)
-    im_ori = vip(scale_pls_noselect.named_steps['pls'])
-    im_sort_indice_ori = np.argsort(im_ori)[::-1]
-    scale_pls_noselect.fit(X_nobe, Y)
-    im_nobe = vip(scale_pls_noselect.named_steps['pls'])
-    im_sort_indice_nobe = np.argsort(im_nobe)[::-1]
-
-    features_num = np.arange(100, 1100, 100).tolist()
-    ori_scores = []
-    nobe_scores = []
-    for fn in features_num:
-        print('features number: %d' % fn)
-        need_features = im_sort_indice_ori[:fn]
-        X_part = X_ori[:, need_features]
-        cv_res_ori_part = cross_val_score(scale_cls, X_part, Y, cv=kfold5,
-                                          scoring='roc_auc', n_jobs=5)
-        ori_scores.append(np.mean(cv_res_ori_part))
-
-        need_features = im_sort_indice_nobe[:fn]
-        X_part = X_nobe[:, need_features]
-        cv_res_nobe_part = cross_val_score(scale_cls, X_part, Y, cv=kfold5,
-                                          scoring='roc_auc', n_jobs=5)
-        nobe_scores.append(np.mean(cv_res_nobe_part))
-
-    json_res['equal_features_num'] = {
-        'featurs_num': features_num,
-        'ori': ori_scores,
-        'nobe': nobe_scores
-    }
-    print('features_num')
-    print(features_num)
-    print('Original:')
-    print(ori_scores)
-    print('No Batch Effect:')
-    print(nobe_scores)
-    print('')
+    print('使用PLS-VIP排序，看不同数量的features对应的AUCs')
+    f_nums = np.arange(100, 1100, 100).tolist()
+    json_res["group_fixed_cv"] = {}
+    for dn, dat in sub_dats.items():
+        pls_noselect.fit(dat, sub_Y)
+        vip_value = np.argsort(vip(pls_noselect))[::-1]
+        cv_reses = []
+        for fn in f_nums:
+            cv_res = cross_val_score(
+                cls, dat[:, vip_value[:fn]], sub_Y, cv=kfold5,
+                scoring='roc_auc', n_jobs=args.njobs)
+            cv_reses.append(cv_res.tolist())
+        json_res['group_fixed_cv'][dn] = cv_reses
+        print("%s: " % dn)
+        print([np.mean(cv_res) for cv_res in cv_reses])
 
     # 保存结果的dict以json的格式保存
-    with open(os.path.join(args.save, '%s.json' % args.to), 'w') as fp:
+    with open(os.path.join(task_path, '%s.json' % args.to), 'w') as fp:
         json.dump(json_res, fp)
 
 

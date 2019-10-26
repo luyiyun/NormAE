@@ -1,6 +1,0 @@
-DATA/
-RESULTS/
-__pycache__/
-.*
-log*.txt
-!.gitignore
