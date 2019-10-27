@@ -47,8 +47,8 @@ class Config:
             '--disc_weight', type=float, default=1.0, nargs='+',
         )
         self.parser.add_argument(
-            '--cls_order_weight', default=(1.0, 1.0), nargs=2, type=float,
-            help="cls loss和order loss在判别是所占的比例，默认是1:1"
+            '--cls_order_bio_weight', default=(1.0, 1.0, 1.0), nargs=3,
+            type=float,
         )
         self.parser.add_argument(
             '--label_smooth', default=0.2, type=float,
@@ -138,7 +138,7 @@ class Config:
             '--early_stop_check_num', default=100, type=int)
         self.parser.add_argument(
             '--dropouts', default=(0.0, 0.0, 0.0, 0.0), type=float,
-            nargs=4
+            nargs=5
         )
         self.parser.add_argument(
             '--visdom_env', default='main'

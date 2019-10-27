@@ -184,7 +184,7 @@ def main():
             schedual_stones=save_json['schedual_stones'],
             cls_leastsquare=save_json['cls_leastsquare'],
             order_losstype=save_json['order_losstype'],
-            cls_order_weight=save_json['cls_order_weight'],
+            cls_order_bio_weight=save_json['cls_order_bio_weight'],
             use_batch_for_order=save_json['use_batch_for_order'],
             visdom_port=save_json['visdom_port'],
             decoder_hiddens=save_json['ae_units'],
