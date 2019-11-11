@@ -165,35 +165,35 @@ def test():
     import sys
     import time
 
-    # sample_file = "./DATA/metabolic/sample.information.T3.csv"
-    # meta_file = "./DATA/metabolic/data_T3原始数据.csv"
-    # t1 = time.perf_counter()
-    # subject_dat, qc_dat = get_metabolic_data(meta_file, sample_file)
-    # t2 = time.perf_counter()
-    # print(t2 - t1)
-    # print('')
+    meta_file = "./DATA/Amide/meta.csv"
+    sample_file = "./DATA/Amide/sample.information.csv"
+    t1 = time.perf_counter()
+    subject_dat, qc_dat = get_metabolic_data(meta_file, sample_file)
+    t2 = time.perf_counter()
+    print(t2 - t1)
+    print('')
 
-    # print(subject_dat.X_df.head())
-    # print(subject_dat.Y_df.head())
-    # print(qc_dat.X_df.head())
-    # print(qc_dat.Y_df.head())
-
-    # print(subject_dat[0])
-    # print(qc_dat[0])
-
-    # print(len(subject_dat))
-    # print(subject_dat.num_features)
-    # print(len(qc_dat))
-    # print(qc_dat.num_features)
-
-    sample_file = './DATA/Demo/sample.csv'
-    qc_file = './DATA/Demo/qc.csv'
-    sub_dat, qc_dat = get_demo_data(sample_file, qc_file, None)
-    print(len(sub_dat), len(qc_dat))
-    print(sub_dat.X_df.head())
-    print(sub_dat.Y_df.head())
+    print(subject_dat.X_df.head())
+    print(subject_dat.Y_df.head())
     print(qc_dat.X_df.head())
     print(qc_dat.Y_df.head())
+
+    print(subject_dat[0])
+    print(qc_dat[0])
+
+    print(len(subject_dat))
+    print(subject_dat.num_features)
+    print(len(qc_dat))
+    print(qc_dat.num_features)
+
+    #  sample_file = './DATA/Demo/sample.csv'
+    #  qc_file = './DATA/Demo/qc.csv'
+    #  sub_dat, qc_dat = get_demo_data(sample_file, qc_file, None)
+    #  print(len(sub_dat), len(qc_dat))
+    #  print(sub_dat.X_df.head())
+    #  print(sub_dat.Y_df.head())
+    #  print(qc_dat.X_df.head())
+    #  print(qc_dat.Y_df.head())
 
 
 if __name__ == "__main__":
