@@ -16,8 +16,7 @@ class Config:
         )
         self.parser.add_argument(
             '-td', '--train_data', default='all',
-            help=("the training data, subject or all (default)"
-                  "即使用所有数据来train")
+            help="the training data, subject or all (default)"
         )
 
         # save results
@@ -59,7 +58,7 @@ class Config:
             help="the weight of adversarial loss for batch labels, default 1"
         )
         self.parser.add_argument(
-            '--lambda_0', type=float, default=1.0,
+            '--lambda_o', type=float, default=1.0,
             help=("the weight of adversarial loss for injection order,"
                   " default 1")
         )

@@ -21,7 +21,7 @@ class BaseData(data.Dataset):
         return len(self.x_df)
 
     def __getitem__(self, indx):
-        sample_x, sample_y = self.x_df.values[indx], self.x_df.values[indx]
+        sample_x, sample_y = self.x_df.values[indx], self.y_df.values[indx]
         return sample_x, sample_y
 
     def transform(self, trans):

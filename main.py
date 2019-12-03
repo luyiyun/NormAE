@@ -25,7 +25,7 @@ def main():
                                              pre_transfer=pre_transfer)
     datas = {'subject': subject_dat, 'qc': qc_dat}
 
-    # ----- 训练网络 -----
+    # ----- training -----
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     trainer = BatchEffectTrainer(
         subject_dat.num_features, subject_dat.num_batch_labels,
@@ -35,7 +35,7 @@ def main():
     best_models, hist, early_stop_objs = trainer.fit(datas)
     print('')
 
-    # 保存结果
+    # ----- save models and results -----
     if os.path.exists(opts.save):
         dirname = input("%s has been already exists, please input New: " %
                         config.args.save)
