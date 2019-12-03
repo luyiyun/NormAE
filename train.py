@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
 from datasets import get_metabolic_data, get_demo_data, ConcatData
-from networks import SimpleCoder, ResNet, ClswithLabelSmoothLoss, OrderLoss
+from networks import SimpleCoder, OrderLoss
 from transfer import Normalization
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
@@ -23,128 +23,84 @@ from visual import VisObj, pca_for_dict, pca_plot
 
 class BatchEffectTrainer:
     def __init__(
-        self, in_features, bottle_num, be_num, batch_label_num=None,
-        lrs=0.01, bs=64, nw=6, epoch=(200, 100, 1000),
-        device=torch.device('cuda:0'), l2=0.0, clip_grad=False,
-        ae_disc_train_num=(1, 1), disc_weight=1.0,
-        label_smooth=0.2, train_with_qc=False, spectral_norm=False,
-        schedual_stones=[3000], cls_leastsquare=False, order_losstype=False,
-        cls_order_bio_weight=(1.0, 1.0, 1.0), use_batch_for_order=True,
-        visdom_port=8097, encoder_hiddens=[300, 300, 300],
-        decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
-        early_stop=False, net_type='simple', resnet_bottle_num=50,
-        optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
-        disc_weight_epoch=500, early_stop_check_num=100,
-        dropouts=(0., 0., 0., 0., 0.), pre_transfer=None, visdom_env='main',
+        self, in_features, batch_label_num, device, pre_transfer, opts
+        #  bottle_num, be_num, batch_label_num=None,
+        #  lrs=0.01, bs=64, nw=6, epoch=(200, 100, 1000),
+        #  device=torch.device('cuda:0'), l2=0.0, clip_grad=False,
+        #  ae_disc_train_num=(1, 1), disc_weight=1.0,
+        #  label_smooth=0.2, train_with_qc=False, spectral_norm=False,
+        #  schedual_stones=[3000], cls_leastsquare=False, order_losstype=False,
+        #  cls_order_bio_weight=(1.0, 1.0, 1.0), use_batch_for_order=True,
+        #  visdom_port=8097, encoder_hiddens=[300, 300, 300],
+        #  decoder_hiddens=[300, 300, 300], disc_hiddens=[300, 300],
+        #  early_stop=False, net_type='simple', resnet_bottle_num=50,
+        #  optimizer='rmsprop', denoise=0.1, reconst_loss='mae',
+        #  disc_weight_epoch=500, early_stop_check_num=100,
+        #  dropouts=(0., 0., 0., 0., 0.), pre_transfer=None, visdom_env='main',
     ):
-        '''
-        in_features: the number of input features;
-        bottle_num: the number of bottle neck layer's units in AE;
-        no_be_num: the number of bottle neck layers's units without batch effect
-            information in AE;
-        batch_label_num: the number of batchs, if supervise=rank, it isn't used;
-        lrs: the learning rates, the first is for reconstruction of AE, the second
-            is for discriminator, if it's float, they are same;
-        bs: train batch size;
-        nw: the number of workers;
-        epoch: the number of training epochs;
-        device: GPU or CPU;
-        l2: the value of weight decay;
-        clip_grad: whether to use gradient truncation;
-        ae_disc_train_num: for one batch, the training number for AE and
-            discriminator;
-        ae_disc_weight: for reconstruction loss, the weights of reconstruction
-            loss and discriminated loss;
-        label_smooth: the label smooth parameter for disciminate;
-        train_with_qc: if true, the dataset of training is concatenated data of
-            subject and qc;
-        spectral_norm: if true, use spectral normalization for all linear layers;
-        schedual_stones: the epoch of lrs multiply 0.1;
-        cls_leastsquare: if ture, use mse in ClswithLabelSmoothLoss;
-        order_leastsquare: if ture, use mse in OrderLoss;
-        cls_order_weight: weights for cls and order in ClsOrderLoss;
-        use_batch_for_order: if use, compute rank loss with batch;
-        '''
 
-        # 用于构建网络的参数
+        # architecture
         self.in_features = in_features
-        self.encoder_hiddens = encoder_hiddens
-        self.decoder_hiddens = decoder_hiddens
-        self.disc_hiddens = disc_hiddens
-        self.bottle_num, self.be_num = bottle_num, be_num
         self.batch_label_num = batch_label_num
-        self.spectral_norm = spectral_norm
         self.device = device
-        self.denoise = denoise
-        self.net_type = net_type
-        self.resnet_bottle_num = resnet_bottle_num
-        self.dropouts = dropouts
-        # 用于构建loss
-        if len(disc_weight) == 2:
-            # 如果disc weight有两个，则在iter phase阶段，disc weight(lambda)
-            #   是进行线性增长的(增长的epoch数量是disc_weight_epoch)，其端点就
-            #   是这两个值，在iter phase的剩下的阶段中，weight是disc_weight[1],
-            #   而在ae phase这个值是0(这个时候没有用到disc loss)，在disc phase
-            #   值是1.
-            iter_w = np.linspace(*disc_weight, num=disc_weight_epoch)
-            self.disc_weight = np.concatenate(
-                [
-                    np.zeros(epoch[0]), np.ones(epoch[1]), iter_w,
-                    np.full(epoch[2]-disc_weight_epoch, disc_weight[-1])
-                ], axis=0)
-        elif len(disc_weight) == 1:
-            # 如果disc weight只有一个值，则在iter phase阶段则一直是这一个值
-            self.disc_weight = np.concatenate([
-                np.zeros(epoch[0]), np.ones(epoch[1]),
-                np.full(epoch[2], disc_weight[0])
-            ], axis=0)
-        else:
-            raise ValueError
-        self.label_smooth = label_smooth
-        self.cls_leastsquare = cls_leastsquare
-        self.order_losstype = order_losstype
-        self.cls_weight, self.order_weight, self.bio_weight = cls_order_bio_weight
-        self.use_batch_for_order = use_batch_for_order
-        self.rec_type = reconst_loss
-        # optimizer的参数
-        self.lrs = [lrs] * 2 if isinstance(lrs, float) else lrs
-        self.rec_lr, self.cls_lr = self.lrs
-        self.l2, self.clip_grad = l2, clip_grad
-        self.schedual_stones = schedual_stones
-        self.optimizer = optimizer
-        # 训练参数
-        self.rec_epoch, self.cls_epoch, self.iter_epoch = epoch
-        self.epoch = sum(epoch)
-        self.rec_train_num, self.cls_train_num = ae_disc_train_num
-        self.bs, self.nw = bs, nw
-        self.train_with_qc = train_with_qc
-        self.early_stop = early_stop
-        # 其他属性
-        self.visdom_port = visdom_port
-        self.visdom_env = visdom_env
-        self.early_stop_check_num = early_stop_check_num
-        self.pre_transfer = pre_transfer
+        self.encoder_hiddens = opts.ae_encoder_units
+        self.decoder_hiddens = opts.ae_decoder_units
+        self.disc_b_hiddens = opts.disc_b_units
+        self.disc_o_hiddens = opts.disc_o_units
+        self.bottle_num = opts.bottle_num
+        self.dropouts = opts.dropouts
 
-        # 构建模型、损失及优化器
+        # loss
+        #  self.cls_weight =
+        #  , self.order_weight, self.bio_weight = cls_order_bio_weight
+        self.use_batch_for_order = opts.use_batch_for_order
+        self.lambda_b, self.lambda_o = opts.lambda_b, opts.lambda_o
+
+        # optimizer
+        self.lr_rec = opts.lr_rec
+        self.lr_disc_b = opts.lr_disc_b
+        self.lr_disc_o = opts.lr_disc_o
+        #  self.lrs = [lrs] * 2 if isinstance(lrs, float) else lrs
+        #  self.rec_lr, self.cls_lr = self.lrs
+        #  self.l2, self.clip_grad = l2, clip_grad
+        #  self.schedual_stones = schedual_stones
+        #  self.optimizer = optimizer
+
+        # training
+        self.rec_epoch, self.cls_epoch, self.iter_epoch = opts.epoch
+        #  self.epoch = sum(epoch)
+        #  self.rec_train_num, self.cls_train_num = ae_disc_train_num
+        self.bs, self.nw = opts.batch_size, opts.num_workers
+        self.train_with_qc = opts.train_data == "all"
+        #  self.train_with_qc = train_with_qc
+        #  self.early_stop = early_stop
+
+        # other
+        self.visdom_port = opts.visdom_port
+        self.visdom_env = opts.visdom_env
+        self.pre_transfer = pre_transfer
+        #  self.early_stop_check_num = early_stop_check_num
+
+        # build model
         self._build_model()
 
-        # 初始化结果记录
+        # training record
         self.history = {
             'disc_cls_loss': [], 'disc_order_loss': [], "disc_bio_loss": [],
             'adv_cls_loss': [], 'adv_order_loss': [], "adv_bio_loss": [],
             'rec_loss': [], 'qc_rec_loss': [], 'qc_distance': []
         }
-        # 可视化工具
+        # visdom
         self.visobj = VisObj(self.visdom_port, env=self.visdom_env)
-        # 提前停止使用
+        #  self.visobj = Visdom(port=self.visdom_port, env=self.visdom_env)
+        # early stop
         self.early_stop_objs = {
             'best_epoch': -1, 'best_qc_loss': 1000, 'best_qc_distance': 1000,
             'best_models': None, 'index': 0, 'best_score': 2000
         }
 
     def fit(self, datas):
-        ''' datas是多个Dataset对象的可迭代对象 '''
-        # 将Dataset对象变成Dataloader对象
+        # get dataloaders
         train_data = data.ConcatDataset([datas['subject'], datas['qc']]) \
             if self.train_with_qc else datas['subject']
         dataloaders = {
@@ -153,30 +109,26 @@ class BatchEffectTrainer:
             'qc': data.DataLoader(datas['qc'], batch_size=self.bs,
                                   num_workers=self.nw)
         }
-        # 开始进行多个epoch训练
-        bar = tqdm(total=self.epoch)
+        # begin training
+        pbar = tqdm(total=self.epoch)
         for e in range(self.epoch):
             self.e = e
-            # 根据e进入不同的phase
             if e < self.rec_epoch:
                 self.phase = 'rec_pretrain'
             elif e < self.rec_epoch + self.cls_epoch:
                 self.phase = 'cls_pretrain'
             else:
                 self.phase = 'iter_train'
-            bar.set_description(self.phase)
+            pbar.set_description(self.phase)
+
             ## train phase
-            # 实例化3个loss对象，用于计算epoch loss
-            disc_cls_loss_obj = mm.Loss()
-            disc_order_loss_obj = mm.Loss()
-            disc_bio_loss_obj = mm.Loss()
-            adv_cls_loss_obj = mm.Loss()
-            adv_order_loss_obj = mm.Loss()
-            adv_bio_loss_obj = mm.Loss()
-            rec_loss_obj = mm.Loss()
-            # 训练时需要将模型更改至训练状态
             for model in self.models.values():
                 model.train()
+            disc_cls_loss_obj = mm.Loss()
+            disc_order_loss_obj = mm.Loss()
+            adv_cls_loss_obj = mm.Loss()
+            adv_order_loss_obj = mm.Loss()
+            rec_loss_obj = mm.Loss()
             # 循环每个batch进行训练
             for batch_x, batch_y in tqdm(dataloaders['train'], 'Batch: '):
                 batch_x = batch_x.to(self.device).float()
@@ -185,34 +137,26 @@ class BatchEffectTrainer:
                 for optimizer in self.optimizers.values():
                     optimizer.zero_grad()
                 if self.phase in ['cls_pretrain', 'iter_train']:
-                    for _ in range(self.cls_train_num):
-                        disc_cls_loss, disc_order_loss, disc_bio_loss = \
-                            self._forward_discriminate(batch_x, batch_y)
+                    disc_cls_loss, disc_order_loss = \
+                        self._forward_discriminate(batch_x, batch_y)
                     disc_cls_loss_obj.add(disc_cls_loss, bs0)
                     disc_order_loss_obj.add(disc_order_loss, bs0)
-                    disc_bio_loss_obj.add(disc_bio_loss, bs0)
                 if self.phase in ['rec_pretrain', 'iter_train']:
-                    for _ in range(self.rec_train_num):
-                        rec_loss, adv_cls_loss, adv_order_loss, adv_bio_loss = \
-                            self._forward_autoencode(batch_x, batch_y)
+                    rec_loss, adv_cls_loss, adv_order_loss = \
+                        self._forward_autoencode(batch_x, batch_y)
                     rec_loss_obj.add(rec_loss, bs0)
                     adv_cls_loss_obj.add(adv_cls_loss, bs0)
                     adv_order_loss_obj.add(adv_order_loss, bs0)
-                    adv_bio_loss_obj.add(adv_bio_loss, bs0)
-            # 看warning说需要把scheduler的step放在optimizer.step之后使用
-            if self.phase == 'iter_train':
-                for sche in self.scheduals.values():
-                    sche.step()
-            # 记录epoch loss
+            #  if self.phase == 'iter_train':
+            #      for sche in self.scheduals.values():
+            #          sche.step()
+            # record loss
             self.history['disc_cls_loss'].append(disc_cls_loss_obj.value())
             self.history['disc_order_loss'].append(disc_order_loss_obj.value())
-            self.history["disc_bio_loss"].append(disc_bio_loss_obj.value())
             self.history['adv_cls_loss'].append(adv_cls_loss_obj.value())
             self.history['adv_order_loss'].append(adv_order_loss_obj.value())
-            self.history["adv_bio_loss"].append(adv_bio_loss_obj.value())
             self.history['rec_loss'].append(rec_loss_obj.value())
-            # 可视化epoch loss
-            # 因为两组loss的取值范围相差太大，所以分开来显示
+            # visual epoch loss
             self.visobj.add_epoch_loss(
                 winname='disc_losses',
                 disc_cls_loss=self.history['disc_cls_loss'][-1],
@@ -226,15 +170,12 @@ class BatchEffectTrainer:
                 winname='recon_losses',
                 recon_loss=self.history['rec_loss'][-1]
             )
-            self.visobj.add_epoch_loss(winname="disc_weight",
-                                       disc_weight=self.disc_weight[self.e])
 
             ## valid phase
-            # 使用当前训练的模型去得到去批次结果
             all_data = ConcatData(datas['subject'], datas['qc'])
             all_reses_dict, qc_loss = self.generate(
                 all_data, verbose=False, compute_qc_loss=True)
-            # 对数据进行对应的pca
+            # pca
             subject_pca, qc_pca = pca_for_dict(all_reses_dict, 3)
             # plot pca
             pca_plot(subject_pca, qc_pca)
@@ -248,30 +189,28 @@ class BatchEffectTrainer:
             self.history['qc_distance'].append(qc_dist)
             self.visobj.add_epoch_loss(winname='qc_rec_loss', qc_loss=qc_loss)
             self.visobj.add_epoch_loss(winname='qc_distance', qc_dist=qc_dist)
-            if self.early_stop and e >= self.epoch - self.early_stop_check_num:
+            if e >= self.epoch - 200:
                 self._check_qc(qc_dist, qc_loss)
             
             # progressbar
-            bar.update(1)
-        bar.close()
+            pbar.update(1)
+        pbar.close()
 
+        # early stop information and save visdom env
         if self.visdom_env != 'main':
             self.visobj.vis.save([self.visdom_env])
-        if self.early_stop:
-            print('')
-            print('The best epoch is %d' % self.early_stop_objs['best_epoch'])
-            print('The best qc loss is %.4f' %
-                self.early_stop_objs['best_qc_loss'])
-            print('The best qc distance is %.4f' %
-                self.early_stop_objs['best_qc_distance'])
-            for k, v in self.models.items():
-                v.load_state_dict(self.early_stop_objs['best_models'][k])
-            self.early_stop_objs.pop('best_models')
-            return self.models, self.history, self.early_stop_objs
-        return self.models, self.history
+        print('')
+        print('The best epoch is %d' % self.early_stop_objs['best_epoch'])
+        print('The best qc loss is %.4f' %
+              self.early_stop_objs['best_qc_loss'])
+        print('The best qc distance is %.4f' %
+              self.early_stop_objs['best_qc_distance'])
+        for k, v in self.models.items():
+            v.load_state_dict(self.early_stop_objs['best_models'][k])
+        self.early_stop_objs.pop('best_models')
+        return self.models, self.history, self.early_stop_objs
 
     def generate(self, data_loader, verbose=True, compute_qc_loss=False):
-        # 准备数据集和模型
         for m in self.models.values():
             m.to(self.device).eval()
         if isinstance(data_loader, data.Dataset):
@@ -288,29 +227,25 @@ class BatchEffectTrainer:
             iterator = data_loader
         with torch.no_grad():
             for batch_x, batch_y in iterator:
-                # X和Y都备份一次
+                # return x and y
                 x_ori.append(batch_x)
                 ys.append(batch_y)
-                # 计算hidden codes
+                # return latent representation
                 batch_x = batch_x.to(self.device, torch.float)
                 batch_y = batch_y.to(self.device, torch.float)
                 hidden = self.models['encoder'](batch_x)
                 codes.append(hidden)
-                # AE重建
-                batch_ys = []
-                if self.cls_weight > 0.0:
-                    cls_in = torch.eye(
-                        self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
-                    batch_ys.append(cls_in)
-                if self.order_weight > 0.0:
-                    order_in = batch_y[:, [0]]
-                    batch_ys.append(order_in)
+                # return rec with and without batch effects
+                batch_ys = [
+                    torch.eye(self.cls_logit_dim)[batch_y[:, 1].long()].to(
+                        hidden),
+                    batch_y[:, [0]]
+                ]
                 batch_ys = torch.cat(batch_ys, dim=1)
                 hidden_be = hidden + self.models['map'](batch_ys)
                 x_rec.append(self.models['decoder'](hidden_be))
-                # 去除批次重建
                 x_rec_nobe.append(self.models['decoder'](hidden))
-                # 是否计算qc的loss，在训练的时候有用
+                # return qc loss
                 if compute_qc_loss:
                     qc_index = batch_y[:, -1] == 0.
                     if qc_index.sum() > 0:
@@ -322,7 +257,8 @@ class BatchEffectTrainer:
                         )
                     else:
                         qc_loss.add(torch.tensor(0.), 0)
-        # 数据整理成dataframe，并保存到一个dict中
+
+        # return dataframe
         res = {
             'Ori': torch.cat(x_ori), 'Ys': torch.cat(ys),
             'Codes': torch.cat(codes), 'Rec': torch.cat(x_rec),
@@ -342,9 +278,8 @@ class BatchEffectTrainer:
                         index=data_loader.dataset.X_df.index,
                         columns=data_loader.dataset.X_df.columns
                     )
-                    if self.pre_transfer is not None:
-                        temp = self.pre_transfer.inverse_transform(res[k], None)
-                        res[k] = temp[0]
+                    res[k] = self.pre_transfer.inverse_transform(
+                        res[k], None)[0]
                 else:
                     res[k] = pd.DataFrame(
                         v.detach().cpu().numpy(),
@@ -377,328 +312,137 @@ class BatchEffectTrainer:
             self.early_stop_objs['index'] += 1
 
     def _build_model(self):
-        '''
-        构建模型，损失函数，优化器以及lr_scheduler
-        '''
-        # according to cls_order_weight, choose classification criterion
-        self.cls_logit_dim = self.batch_label_num \
-            if self.cls_weight > 0.0 else 0
-        self.order_logit_dim = 1 if self.order_weight > 0.0 else 0
-        self.bio_logit_dim = 1 if self.bio_weight > 0.0 else 0
-        all_logit_dim = self.cls_logit_dim + self.order_logit_dim
-        # 得到3个模型
-        if self.net_type == 'simple':
-            self.models = {
-                'encoder': SimpleCoder(
-                    [self.in_features] + self.encoder_hiddens +\
-                    [self.bottle_num], dropout=self.dropouts[0]
-                ).to(self.device),
-                'decoder': SimpleCoder(
-                    [self.bottle_num] + self.decoder_hiddens +\
-                    [self.in_features], dropout=self.dropouts[1],
-                    final_act=nn.Sigmoid() if self.rec_type == 'ce' else None
-                ).to(self.device),
-                'map': SimpleCoder(
-                    [all_logit_dim] + [500] + [self.bottle_num],
-                ).to(self.device),
-            }
-            if self.cls_logit_dim > 0:
-                self.models['disc_cls'] = SimpleCoder(
-                    [self.bottle_num] + self.disc_hiddens +\
-                    [self.cls_logit_dim], bn=True, dropout=self.dropouts[2]
-                ).to(self.device)
-            if self.order_logit_dim > 0:
-                self.models['disc_order'] = SimpleCoder(
-                    [self.bottle_num] + self.disc_hiddens +\
-                    [self.order_logit_dim], bn=False, dropout=self.dropouts[3]
-                ).to(self.device)
-            if self.bio_logit_dim > 0:
-                self.models["disc_bio"] = SimpleCoder(
-                    [self.bottle_num] + self.disc_hiddens +\
-                    [self.bio_logit_dim], bn=True, dropout=self.dropouts[4]
-                ).to(self.device)
-        else:
-            raise NotImplementedError
-            self.models = {
-                'encoder': ResNet(
-                    [self.in_features] + self.encoder_hiddens +\
-                    [self.bottle_num], self.resnet_bottle_num
-                ).to(device),
-                'decoder': ResNet(
-                    [self.bottle_num] + self.decoder_hiddens +\
-                    [self.in_features], self.resnet_bottle_num
-                ).to(device),
-                'disc': ResNet(
-                    [self.bottle_num-self.be_num] + self.disc_hiddens +\
-                    [self.logit_dim], self.resnet_bottle_num,
-                ).to(device)
-            }
-        # 构建loss
-        self.criterions = {
-            'cls': ClswithLabelSmoothLoss(
-                self.label_smooth, self.cls_leastsquare),
-            'order': OrderLoss(self.order_losstype),
-            'bio': nn.BCEWithLogitsLoss()
+        logit_dim = self.batch_label_num + 1
+        # build models
+        self.models = {
+            'encoder': SimpleCoder(
+                [self.in_features] + self.encoder_hiddens +
+                [self.bottle_num], dropout=self.dropouts[0]
+            ).to(self.device),
+            'decoder': SimpleCoder(
+                [self.bottle_num] + self.decoder_hiddens +
+                [self.in_features], dropout=self.dropouts[1],
+                final_act=None
+            ).to(self.device),
+            'map': SimpleCoder(
+                [logit_dim] + [500] + [self.bottle_num],
+            ).to(self.device),
+            'disc_b': SimpleCoder(
+                [self.bottle_num] + self.disc_b_hiddens +
+                [self.batch_label_num], bn=True, dropout=self.dropouts[2]
+            ).to(self.device),
+            "disc_o": SimpleCoder(
+                [self.bottle_num] + self.disc_o_hiddens + [1],
+                bn=False, dropout=self.dropouts[3]
+            ).to(self.device)
         }
-        if self.rec_type == 'mae':
-            self.criterions['rec'] = nn.L1Loss()
-        elif self.rec_type == 'mse':
-            self.criterions['rec'] = nn.MSELoss()
-        elif self.rec_type == 'ce':
-            self.criterions['rec'] = nn.BCELoss()
-        else:
-            raise ValueError
-        # 构建optim
-        if self.optimizer == 'rmsprop':
-            optimizer_obj = partial(optim.RMSprop, momentum=0.5)
-        elif self.optimizer == 'adam':
-            optimizer_obj = partial(optim.Adam, betas=(0.5, 0.9))
-        else:
-            raise ValueError
+        # build loss
+        self.criterions = {
+            'cls': nn.CrossEntropyLoss(),
+            'order': OrderLoss(),
+            "rec": nn.L1Loss()
+        }
+        # build optim
+        optimizer_obj = partial(optim.Adam, betas=(0.5, 0.9))
         self.optimizers = {
             'rec': optimizer_obj(
                 chain(
                     self.models['encoder'].parameters(),
                     self.models['decoder'].parameters(),
                     self.models['map'].parameters()
-                ),
-                lr=self.rec_lr, weight_decay=self.l2
-            )
-        }
-        if self.cls_logit_dim > 0:
-            self.optimizers['cls'] = optimizer_obj(
-                self.models['disc_cls'].parameters(),
-                lr=self.cls_lr*self.cls_weight,
-                weight_decay=self.l2
-            )
-        if self.order_logit_dim > 0:
-            self.optimizers['order'] = optimizer_obj(
-                self.models['disc_order'].parameters(),
-                lr=self.cls_lr*self.order_weight,
-                weight_decay=self.l2
-            )
-        if self.bio_logit_dim > 0:
-            self.optimizers['bio'] = optimizer_obj(
-                self.models["disc_bio"].parameters(),
-                lr = self.cls_lr*self.bio_weight,
-                weight_decay=self.l2
-            )
-        self.scheduals = {
-            'rec': optim.lr_scheduler.MultiStepLR(
-                self.optimizers['rec'], self.schedual_stones,
-                gamma=0.1
+                ), lr=self.lr_rec
             ),
+            "cls": optimizer_obj(self.models['disc_cls'].parameters(),
+                                 lr=self.lr_disc_b),
+            "order": optimizer_obj(self.models['disc_order'].parameters(),
+                                   lr=self.lr_disc_o)
         }
-        if self.cls_logit_dim > 0:
-            self.scheduals['cls'] = optim.lr_scheduler.MultiStepLR(
-                self.optimizers['cls'], self.schedual_stones,
-                gamma=0.1
-            )
-        if self.order_logit_dim > 0:
-            self.scheduals['order'] = optim.lr_scheduler.MultiStepLR(
-                self.optimizers['order'], self.schedual_stones,
-                gamma=0.1
-            )
-        if self.bio_logit_dim > 0:
-            self.scheduals["bio"] = optim.lr_scheduler.MultiStepLR(
-                self.optimizers['bio'], self.schedual_stones,
-                gamma=0.1
-            )
+        #  self.scheduals = {
+        #      'rec': optim.lr_scheduler.MultiStepLR(
+        #          self.optimizers['rec'], self.schedual_stones,
+        #          gamma=0.1
+        #      ),
+        #  }
+        #  if self.cls_logit_dim > 0:
+        #      self.scheduals['cls'] = optim.lr_scheduler.MultiStepLR(
+        #          self.optimizers['cls'], self.schedual_stones,
+        #          gamma=0.1
+        #      )
+        #  if self.order_logit_dim > 0:
+        #      self.scheduals['order'] = optim.lr_scheduler.MultiStepLR(
+        #          self.optimizers['order'], self.schedual_stones,
+        #          gamma=0.1
+        #      )
+        #  if self.bio_logit_dim > 0:
+        #      self.scheduals["bio"] = optim.lr_scheduler.MultiStepLR(
+        #          self.optimizers['bio'], self.schedual_stones,
+        #          gamma=0.1
+        #      )
 
     def _forward_autoencode(self, batch_x, batch_y):
         ''' autoencode进行训练的部分 '''
         res = [None, None, None, None]
         with torch.enable_grad():
             # encoder
-            if self.denoise is not None and self.denoise > 0.0:
-                noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
-                batch_x_noise = batch_x + noise
-                batch_x_noise = batch_x_noise.clamp(0, 1)
-            else:
-                batch_x_noise = batch_x
-
-            hidden = self.models['encoder'](batch_x_noise)
+            #  if self.denoise is not None and self.denoise > 0.0:
+            #      noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
+            #      batch_x_noise = batch_x + noise
+            #      batch_x_noise = batch_x_noise.clamp(0, 1)
+            #  else:
+            #      batch_x_noise = batch_x
+            hidden = self.models['encoder'](batch_x)
             # decoder
-            batch_ys = []
-            if self.cls_weight > 0.0:
-                cls_in = torch.eye(
-                    self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden)
-                batch_ys.append(cls_in)
-            if self.order_weight > 0.0:
-                order_in = batch_y[:, [0]]
-                batch_ys.append(order_in)
+            batch_ys = [
+                torch.eye(self.cls_logit_dim)[batch_y[:, 1].long()].to(hidden),
+                batch_y[:, [0]]
+
+            ]
             batch_ys = torch.cat(batch_ys, dim=1)
             hidden_be = hidden + self.models['map'](batch_ys)
             batch_x_rec = self.models['decoder'](hidden_be)
             # reconstruction losses
             recon_loss = self.criterions['rec'](batch_x_rec, batch_x)
-            res[0] = recon_loss
-            all_loss = recon_loss.clone()
-            if self.phase == "iter_train":
-                if self.cls_weight > 0.0:
-                    # discriminator, but not training
-                    logit_cls = self.models['disc_cls'](hidden)
-                    loss_cls = self.criterions['cls'](logit_cls, batch_y[:, 1])
-                    all_loss -= self.disc_weight[self.e]*loss_cls
-                    res[1] = loss_cls
-                if self.order_weight > 0.0:
-                    if self.use_batch_for_order:
-                        group = batch_y[:, 1]
-                    else:
-                        group = None
-                    logit_order = self.models['disc_order'](hidden)
-                    loss_order = self.criterions['order'](
-                        logit_order, batch_y[:, 0], group
-                    )
-                    all_loss -= self.disc_weight[self.e]*loss_order
-                    res[2] = loss_order
-                if self.bio_weight > 0.0:
-                    logit_bio = self.models['disc_bio'](hidden).squeeze()
-                    loss_bio = self.criterions["bio"](logit_bio, batch_y[:, 2])
-                    all_loss += self.disc_weight[self.e]*loss_bio
-                    res[3] = loss_bio
-
+            # adversarial regularizations (disc_b)
+            logit_cls = self.models['disc_b'](hidden)
+            loss_cls = self.criterions['cls'](logit_cls, batch_y[:, 1])
+            all_loss -= self.lambda_b * loss_cls
+            # adversarial regularizations (disc_o)
+            if self.use_batch_for_order:
+                group = batch_y[:, 1]
+            else:
+                group = None
+            logit_order = self.models['disc_order'](hidden)
+            loss_order = self.criterions['order'](logit_order, batch_y[:, 0],
+                                                  group)
+            all_loss -= self.lambda_o * loss_order
         all_loss.backward()
-        if self.clip_grad:
-            nn.utils.clip_grad_norm_(
-                chain(
-                    self.models['encoder'].parameters(),
-                    self.models['decoder'].parameters(),
-                    self.models['map'].parameters()
-                ), max_norm=1
-            )
         self.optimizers['rec'].step()
-        return res
+        return [recon_loss, loss_cls, loss_order]
 
     def _forward_discriminate(self, batch_x, batch_y):
-        ''' discriminator进行训练的部分 '''
         with torch.no_grad():
-            if self.denoise is not None and self.denoise > 0.0:
-                noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
-                batch_x_noise = batch_x + noise
-                batch_x_noise = batch_x_noise.clamp(0, 1)
-            else:
-                batch_x_noise = batch_x
-            hidden = self.models['encoder'](batch_x_noise)
-        res = [None, None, None]
+            #  if self.denoise is not None and self.denoise > 0.0:
+            #      noise = torch.randn(*batch_x.shape).to(batch_x) * self.denoise
+            #      batch_x_noise = batch_x + noise
+            #      batch_x_noise = batch_x_noise.clamp(0, 1)
+            #  else:
+            #      batch_x_noise = batch_x
+            hidden = self.models['encoder'](batch_x)
         with torch.enable_grad():
-            if self.cls_weight > 0.0:
-                logit_cls = self.models['disc_cls'](hidden)
-                adv_cls_loss = self.criterions['cls'](logit_cls, batch_y[:, 1])
-                adv_cls_loss.backward()
-                if self.clip_grad:
-                    nn.utils.clip_grad_norm_(
-                        self.models['disc_cls'].parameters(), max_norm=1
-                    )
-                self.optimizers['cls'].step()
-                res[0] = adv_cls_loss
-            if self.order_weight > 0.0:
-                logit_order = self.models['disc_order'](hidden)
-                if self.use_batch_for_order:
-                    group = batch_y[:, 1]
-                else:
-                    group = None
-                adv_order_loss = self.criterions['order'](
-                    logit_order, batch_y[:, 0], group)
-                # 如果是None，则表示没有计算得到想要的loss
-                adv_order_loss.backward()
-                if self.clip_grad:
-                    nn.utils.clip_grad_norm_(
-                        self.models['disc_order'].parameters(), max_norm=1
-                    )
-                self.optimizers['order'].step()
-                res[1] = adv_order_loss
-            if self.bio_weight > 0.0:
-                logit_bio = self.models["disc_bio"](hidden).squeeze()
-                bio_cls_loss = self.criterions["bio"](logit_bio, batch_y[:, 2])
-                bio_cls_loss.backward()
-                if self.clip_grad:
-                    nn.utils.clip_grad_norm_(
-                        self.models['disc_bio'].parameters(), max_norm=1
-                    )
-                self.optimizers['bio'].step()
-                res[2] = bio_cls_loss
-        return res
+            # disc_b
+            logit_cls = self.models['disc_cls'](hidden)
+            adv_cls_loss = self.criterions['cls'](logit_cls, batch_y[:, 1])
+            adv_cls_loss.backward()
+            self.optimizers['cls'].step()
+            logit_order = self.models['disc_order'](hidden)
+            # disc_o
+            if self.use_batch_for_order:
+                group = batch_y[:, 1]
+            else:
+                group = None
+            adv_order_loss = self.criterions['order'](
+                logit_order, batch_y[:, 0], group)
+            adv_order_loss.backward()
+        return [adv_cls_loss, adv_order_loss]
 
-def main():
-    from config import Config
 
-    # config
-    config = Config()
-    config.show()
-    if config.args.reconst_loss == 'ce' and config.args.data_normalization != 'minmax':
-        raise ValueError
-
-    # ----- 读取数据 -----
-    pre_transfer = Normalization(config.args.data_normalization)
-    if config.args.task == 'demo':
-        subject_dat, qc_dat = get_demo_data(
-            config.demo_sub_file, config.demo_qc_file, pre_transfer
-        )
-    else:
-        subject_dat, qc_dat = get_metabolic_data(
-            config.metabolic_x_files[config.args.task],
-            config.metabolic_y_files[config.args.task],
-            pre_transfer=pre_transfer
-        )
-    datas = {'subject': subject_dat, 'qc': qc_dat}
-
-    # ----- 训练网络 -----
-    trainer = BatchEffectTrainer(
-        subject_dat.num_features, config.args.bottle_num,
-        config.args.be_num, batch_label_num=subject_dat.num_batch_labels,
-        lrs=config.args.ae_disc_lr, bs=config.args.batch_size,
-        nw=config.args.num_workers, epoch=config.args.epoch,
-        device=torch.device('cuda:0'), l2=config.args.l2, clip_grad=True,
-        ae_disc_train_num=config.args.ae_disc_train_num,
-        disc_weight=config.args.disc_weight,
-        label_smooth=config.args.label_smooth,
-        train_with_qc=config.args.train_data == 'all',
-        spectral_norm=config.args.spectral_norm,
-        schedual_stones=config.args.schedual_stones,
-        cls_leastsquare=config.args.cls_leastsquare,
-        order_losstype=config.args.order_losstype,
-        cls_order_bio_weight=config.args.cls_order_bio_weight,
-        use_batch_for_order=config.args.use_batch_for_order,
-        visdom_port=config.args.visdom_port,
-        decoder_hiddens=config.args.ae_units,
-        encoder_hiddens=config.args.ae_units[::-1],
-        disc_hiddens=config.args.disc_units,
-        early_stop=config.args.early_stop,
-        net_type=config.args.net_type,
-        resnet_bottle_num=config.args.resnet_bottle_num,
-        optimizer=config.args.optim,
-        denoise=config.args.denoise,
-        reconst_loss=config.args.reconst_loss,
-        disc_weight_epoch=config.args.disc_weight_epoch,
-        early_stop_check_num=config.args.early_stop_check_num,
-        dropouts=config.args.dropouts,
-        pre_transfer=pre_transfer,
-        visdom_env=config.args.visdom_env
-    )
-    if config.args.load_model != '':
-        trainer.load_model(config.args.load_model)
-    if config.args.early_stop:
-        best_models, hist, early_stop_objs = trainer.fit(datas)
-    else:
-        best_models, hist = trainer.fit(datas)
-    print('')
-
-    # 保存结果
-    if os.path.exists(config.args.save):
-        dirname = input("%s has been already exists, please input New: " %
-                        config.args.save)
-        os.makedirs(dirname)
-    else:
-        os.makedirs(config.args.save)
-        dirname = config.args.save
-    torch.save(best_models, os.path.join(dirname, 'models.pth'))
-    pd.DataFrame(hist).to_csv(os.path.join(dirname, 'train.csv'))
-    config.save(os.path.join(dirname, 'config.json'))
-    if config.args.early_stop:
-        with open(os.path.join(dirname, 'early_stop_info.json'), 'w') as f:
-            json.dump(early_stop_objs, f)
-    
-
-if __name__ == "__main__":
-    main()

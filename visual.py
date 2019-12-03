@@ -8,14 +8,9 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 
-'''
-注意到，pca_for_dict和pca_dict两个函数会重复进行一些操作，所以还有改进的余地
-'''
-
-
 class VisObj:
     def __init__(self, port=8097, env='main'):
-        self.epoch_idx = {}  # 每个窗口的横坐标画到了哪里，进行记录
+        self.epoch_idx = {}
         self.batch_losses = {}
         self.epoch_losses = {}
         self.vis = visdom.Visdom(port=port, env=env)
@@ -37,7 +32,6 @@ class VisObj:
 
     @staticmethod
     def _dict2array(**loss_dict):
-        ''' 将输入的一个个scale合并成visdom接受的array格式，并输出它和其名称 '''
         ks = []
         vs = []
         for k, v in loss_dict.items():
@@ -48,12 +42,7 @@ class VisObj:
 
 
 def pca_for_dict(all_dict, n_components=2, sub_qc_split=True):
-    '''
-    对all_dict中的Ori、Rec_nobe、Rec进行pca，并返回为dict
-    sub_qc_split控制是返回整个数据集，还是将subject和qc分开返回, 这时需要Ys
-    注意，没有被pca处理的all_dict中的部分，会原样返回。
-    '''
-    # 因为generate的结果改成了dict of dfs
+    # results are dataframes
     ss = StandardScaler()
     pca = PCA(n_components)
     pca_dict = {}
@@ -72,7 +61,6 @@ def pca_for_dict(all_dict, n_components=2, sub_qc_split=True):
 
 
 def pca_plot(subject_pca, qc_pca):
-    ''' 使用pca_for_dict得到的结果来绘制pca图 '''
     _, axs = plt.subplots(nrows=2, ncols=2, figsize=(14, 14))
 
     # Subject points of Original datas, reconstructed datas containing batch
@@ -149,11 +137,3 @@ def pca_plot(subject_pca, qc_pca):
             *scatter.legend_elements(), loc="lower left", title='label')
         ax.add_artist(legend2)
         ax.legend()
-
-
-def test():
-    pass
-
-
-if __name__ == '__main__':
-    test()

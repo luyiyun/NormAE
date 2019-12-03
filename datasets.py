@@ -51,6 +51,22 @@ class ConcatData(BaseData):
 def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     '''
     Read metabolic data file and get dataframes
+    metabolic data (x_file) example:
+        name,mz,rt,QC1,A1,A2,A3,QC2,A4\n
+        M64T32,64,32,1000,2000,3000,4000,5000,6000\n
+        M65T33,65,33,10000,20000,30000,40000,50000,60000\n
+        ...
+    sample information data (y_file) example:
+        sample.name,injection.order,batch,group,class\n
+        QC1,1,1,QC,QC\n
+        A1,2,1,0,Subject\n
+        A2,3,1,1,Subject\n
+        A3,4,1,1,Subject\n
+        QC2,5,2,QC,QC\n
+        A4,6,2,0,Subject\n
+        A5,7,2,1,Subject\n
+        A6,8,2,1,Subject\n
+        ...
     '''
     # read y_file
     y_df = pd.read_csv(y_file, index_col='sample.name')
@@ -109,9 +125,8 @@ def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     return BaseData(meta_df, y_df)
 
 
-def test():
-    """ for testing """
-
+if __name__ == "__main__":
+    # for testing
     meta_file = "./DATA/Amide/meta.csv"
     sample_file = "./DATA/Amide/sample.information.csv"
     subject_dat, qc_dat = get_metabolic_data(meta_file, sample_file)
@@ -132,5 +147,3 @@ def test():
     print(qc_dat.num_batch_labels)
 
 
-if __name__ == "__main__":
-    test()
