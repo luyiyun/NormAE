@@ -4,7 +4,7 @@ It's a novel batch effects removal method based on deep autoencoder and adversar
 
 ***
 
-Paper: NormAE: A Novel Deep Adversarial Learning Model to Remove Batch Effects in Liquid Chromatography Mass Spectrometry-Based Metabolomics Data
+Paper: **NormAE: A Novel Deep Adversarial Learning Model to Remove Batch Effects in Liquid Chromatography Mass Spectrometry-Based Metabolomics Data**
 
 ***
 
@@ -56,7 +56,10 @@ A6,8,2,1,Subject\n
 
 #### Training
 
+Maybe the visualization of visdom is required:
+
 ```
+visdom --port 8097
 python main.py --task train --meta_data /path/to/metabolomics_data --sample_data /path/to/batch_information --save /path/to/save_dir
 ```
 
