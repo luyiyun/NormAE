@@ -77,7 +77,7 @@ class Config:
             help="the leanring rate of disc_o training, default 0.0005"
         )
         self.parser.add_argument(
-            '-e', '--epoch', default=(200, 100, 1000), type=int, nargs=3,
+            '-e', '--epoch', default=(1000, 10, 700), type=int, nargs=3,
             help=("ae pretrain, disc pretrain, "
                   "iteration train epochs，default (1000, 10, 700)")
         )

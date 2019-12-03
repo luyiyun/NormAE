@@ -30,8 +30,6 @@ def main():
     trainer = BatchEffectTrainer(
         subject_dat.num_features, subject_dat.num_batch_labels,
         device, pre_transfer, opts)
-    #  if config.args.load_model != '':
-    #      trainer.load_model(config.args.load_model)
     best_models, hist, early_stop_objs = trainer.fit(datas)
     print('')
 
@@ -41,7 +39,7 @@ def main():
                         config.args.save)
         os.makedirs(dirname)
     else:
-        os.makedirs(config.args.save)
+        os.makedirs(opts.save)
     torch.save(best_models, os.path.join(opts.save, 'models.pth'))
     pd.DataFrame(hist).to_csv(os.path.join(opts.save, 'train.csv'))
     config.save(os.path.join(opts.save, 'config.json'))
