@@ -7,6 +7,13 @@ class Config:
     def __init__(self):
         self.parser = argparse.ArgumentParser()
 
+        # task
+        self.parser.add_argument(
+            "--task", default="train",
+            help=("task, train model (train, default) or "
+                  "remove batch effects (remove)")
+        )
+
         # dataset
         self.parser.add_argument(
             "--meta_data", help="the path of metabolomics data"
@@ -92,6 +99,10 @@ class Config:
 
         # other
         self.parser.add_argument(
+            "--load", default=None, type=str,
+            help="load trained models, default None"
+        )
+        self.parser.add_argument(
             '--visdom_env', default='main',
             help="if use visdom, it is the env name,default main"
         )
@@ -107,6 +118,8 @@ class Config:
         self.args = self.parser.parse_args()
 
     def init(self):
+        if self.args.task == "remove" and self.args.load is None:
+            raise ValueError("load cannot be None for remove task.")
         return self.args
 
     def save(self, fname):

@@ -361,6 +361,12 @@ class BatchEffectTrainer:
                 all_loss -= self.lambda_o * loss_o
                 res[2] = loss_o
         all_loss.backward()
+        nn.utils.clip_grad_norm_(
+            chain(self.models["encoder"].parameters(),
+                  self.models["decoder"].parameters(),
+                  self.models["map"].parameters()),
+            max_norm=1
+        )
         self.optimizers['rec'].step()
         return res
 
@@ -373,9 +379,11 @@ class BatchEffectTrainer:
             adv_b_loss = self.criterions['disc_b'](logit_b,
                                                    batch_y[:, 1].long())
             adv_b_loss.backward()
+            nn.utils.clip_grad_norm_(self.models["disc_b"].parameters(),
+                                     max_norm=1)
             self.optimizers['disc_b'].step()
             # disc_o
-            logit_o= self.models['disc_o'](hidden)
+            logit_o = self.models['disc_o'](hidden)
             if self.use_batch_for_order:
                 group = batch_y[:, 1]
             else:
@@ -383,6 +391,9 @@ class BatchEffectTrainer:
             adv_o_loss = self.criterions['disc_o'](
                 logit_o, batch_y[:, 0], group)
             adv_o_loss.backward()
+            nn.utils.clip_grad_norm_(self.models["disc_b"].parameters(),
+                                     max_norm=1)
+            self.optimizers['disc_o'].step()
         return [adv_b_loss, adv_o_loss]
 
 
