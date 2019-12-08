@@ -15,7 +15,7 @@ class BaseData(data.Dataset):
         self.x_df, self.y_df = X_df, Y_df
         self.pre_transfer = pre_transfer
         if self.pre_transfer is not None:
-            self.x_df, self.x_df = self.pre_transfer(self.x_df, self.x_df)
+            self.x_df, self.y_df = self.pre_transfer(self.x_df, self.y_df)
 
     def __len__(self):
         return len(self.x_df)
@@ -113,8 +113,8 @@ def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     # digitize class
     y_df['class'].replace({'Subject': 1, 'QC': 0}, inplace=True)
     # inverse injection.order
-    y_df['injection.order'] = y_df['injection.order'].max(
-    ) - y_df['injection.order']
+    # y_df['injection.order'] = y_df['injection.order'].max(
+    # ) - y_df['injection.order']
 
     if pre_transfer is not None:
         meta_df, y_df = pre_transfer(meta_df, y_df)
