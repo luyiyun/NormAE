@@ -118,6 +118,14 @@ class Config:
             "--use_log", action="store_true",
             help="use logrithm?"
         )
+        self.parser.add_argument(
+            "--use_batch", default=None, type=int,
+            help="use part of batches? default None"
+        )
+        self.parser.add_argument(
+            "--sample_size", default=None, type=float,
+            help="use size of part of samples? default None"
+        )
 
         self.args = self.parser.parse_args()
 
@@ -137,4 +145,3 @@ class Config:
         for k, v in self.args.__dict__.items():
             print('%s:  %s' % (k, str(v)))
         print('')
-

@@ -318,9 +318,9 @@ class BatchEffectTrainer:
                 ), lr=self.lr_rec
             ),
             "disc_b": optimizer_obj(self.models['disc_b'].parameters(),
-                                 lr=self.lr_disc_b),
+                                    lr=self.lr_disc_b),
             "disc_o": optimizer_obj(self.models['disc_o'].parameters(),
-                                   lr=self.lr_disc_o)
+                                    lr=self.lr_disc_o)
         }
 
     def _forward_autoencode(self, batch_x, batch_y):

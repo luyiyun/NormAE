@@ -1,8 +1,5 @@
-import copy
-
 import numpy as np
 import visdom
-import torch
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler

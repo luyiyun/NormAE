@@ -24,7 +24,9 @@ def main():
     subject_dat, qc_dat = get_metabolic_data(opts.meta_data,
                                              opts.sample_data,
                                              pre_transfer=pre_transfer,
-                                             use_log=opts.use_log)
+                                             use_log=opts.use_log,
+                                             use_batch=opts.use_batch,
+                                             use_samples_size=opts.sample_size)
     datas = {'subject': subject_dat, 'qc': qc_dat}
 
     # build estimator
