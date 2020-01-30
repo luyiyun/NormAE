@@ -156,7 +156,7 @@ class BatchEffectTrainer:
             self.visobj.add_epoch_loss(winname='qc_distance', qc_dist=qc_dist)
             if e >= (self.epoch - 200):
                 self._check_qc(qc_dist, qc_loss)
-            
+
             # progressbar
             pbar.update(1)
         pbar.close()
@@ -395,5 +395,3 @@ class BatchEffectTrainer:
                                      max_norm=1)
             self.optimizers['disc_o'].step()
         return [adv_b_loss, adv_o_loss]
-
-

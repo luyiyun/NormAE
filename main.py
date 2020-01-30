@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+from time import perf_counter
 
 import pandas as pd
 import torch
@@ -38,7 +39,10 @@ def main():
         trainer.load_model(model_file)
     if opts.task == "train":
         # ----- training -----
+        fit_time1 = perf_counter()
         best_models, hist, early_stop_objs = trainer.fit(datas)
+        fit_time2 = perf_counter()
+        early_stop_objs["fit_duration"] = fit_time2 - fit_time1
         print('')
         # ----- save models and results -----
         if os.path.exists(opts.save):
