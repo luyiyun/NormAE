@@ -22,7 +22,8 @@ def main():
     pre_transfer = Normalization("standard")
     subject_dat, qc_dat = get_metabolic_data(opts.meta_data,
                                              opts.sample_data,
-                                             pre_transfer=pre_transfer)
+                                             pre_transfer=pre_transfer,
+                                             use_log=opts.use_log)
     datas = {'subject': subject_dat, 'qc': qc_dat}
 
     # build estimator
@@ -60,7 +61,7 @@ def main():
         for k, v in all_res.items():
             if k not in ['Ys', 'Codes']:
                 v, _ = pre_transfer.inverse_transform(v, None)
-                v = v.T  
+                v = v.T
                 v.index.name = 'meta.name'
             v.to_csv(os.path.join(opts.save, '%s.csv' % k))
         print('')

@@ -114,6 +114,10 @@ class Config:
             '-nw', '--num_workers', default=12, type=int,
             help='the number of multi cores, default 12'
         )
+        self.parser.add_argument(
+            "--use_log", action="store_true",
+            help="use logrithm?"
+        )
 
         self.args = self.parser.parse_args()
 

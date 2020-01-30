@@ -25,7 +25,6 @@ class Normalization:
             self.fit_ind = True
         return pd.DataFrame(x, index=xindex, columns=xcolumns), y
 
-
     def reset(self):
         if self.fit_ind:
             self.scaler = __class__.Scalers[self.ty]

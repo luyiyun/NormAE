@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch.utils.data as data
 
@@ -48,7 +49,9 @@ class ConcatData(BaseData):
         super(ConcatData, self).__init__(x_dfs, y_dfs, None)
 
 
-def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
+def get_metabolic_data(
+    x_file, y_file, pre_transfer=None, sub_qc_split=True, use_log=False
+):
     '''
     Read metabolic data file and get dataframes
     metabolic data (x_file) example:
@@ -116,6 +119,8 @@ def get_metabolic_data(x_file, y_file, pre_transfer=None, sub_qc_split=True):
     # y_df['injection.order'] = y_df['injection.order'].max(
     # ) - y_df['injection.order']
 
+    if use_log:
+        meta_df = meta_df.applymap(np.log)
     if pre_transfer is not None:
         meta_df, y_df = pre_transfer(meta_df, y_df)
     if sub_qc_split:
