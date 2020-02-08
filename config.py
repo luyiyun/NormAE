@@ -126,7 +126,14 @@ class Config:
             "--sample_size", default=None, type=float,
             help="use size of part of samples? default None"
         )
-
+        self.parser.add_argument(
+            "--random_seed", default=1234, type=int,
+            help="random seed, default 1234."
+        )
+        self.parser.add_argument(
+            "--device", default=None, type=str,
+            choices=(None, "CPU", "GPU"), help="device"
+        )
         self.args = self.parser.parse_args()
 
     def init(self):

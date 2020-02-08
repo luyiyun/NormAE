@@ -52,7 +52,7 @@ class ConcatData(BaseData):
 
 def get_metabolic_data(
     x_file, y_file, pre_transfer=None, sub_qc_split=True, use_log=False,
-    use_batch=None, use_samples_size=None
+    use_batch=None, use_samples_size=None, random_seed=None
 ):
     '''
     Read metabolic data file and get dataframes
@@ -122,12 +122,13 @@ def get_metabolic_data(
     # ) - y_df['injection.order']
 
     if use_batch is not None:
-        bool_ind = y_df.loc[:, "batch"] < use_batch
-        meta_df, y_df = meta_df[bool_ind, :], y_df[bool_ind, :]
+        bool_ind = (y_df.loc[:, "batch"] < use_batch).values
+        meta_df, y_df = meta_df.loc[bool_ind, :], y_df.loc[bool_ind, :]
     if use_samples_size is not None:
         meta_df, _, y_df, _ = train_test_split(
             meta_df, y_df, train_size=use_samples_size,
-            stratify=y_df.loc[:, "group"].values
+            stratify=y_df.loc[:, "batch"].values,
+            random_state=random_seed
         )
     if use_log:
         meta_df = meta_df.applymap(np.log)

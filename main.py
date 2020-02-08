@@ -26,11 +26,15 @@ def main():
                                              pre_transfer=pre_transfer,
                                              use_log=opts.use_log,
                                              use_batch=opts.use_batch,
-                                             use_samples_size=opts.sample_size)
+                                             use_samples_size=opts.sample_size,
+                                             random_seed=opts.random_seed)
     datas = {'subject': subject_dat, 'qc': qc_dat}
 
     # build estimator
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if opts.device is None:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cuda:0" if opts.device == "GPU" else "cpu")
     trainer = BatchEffectTrainer(
         subject_dat.num_features, subject_dat.num_batch_labels,
         device, pre_transfer, opts)
