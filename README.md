@@ -8,6 +8,10 @@ The NormAE method was tested in two real metabolomics datasets. We show the resu
 
 ![amide](/imgs/figure2.png)
 
+<div align=center>
+The results of Amide dataset. There are PCA score plots (A), heatmaps of the PCCs (B), intensity of peak M235T294 changing with injection order (C), the cumulative RSD curve of QCs (D), the number of differential peaks (E), average AUC values using same number of peaks (F), and AUC values using selected peaks based on features selection pipeline (G) before and after applying each batch effects removal method. Four colors circles refer to different batches. The solid and open circles refer to QCs and subject samples, respectively.
+</div>
+
 ***
 
 Paper: **NormAE: A Novel Deep Adversarial Learning Model to Remove Batch Effects in Liquid Chromatography Mass Spectrometry-Based Metabolomics Data**
@@ -34,7 +38,7 @@ The CPU we used is Intel(R) Core(TM) i7-8700k CPU @ 3.70GHz. The memory occupied
 
 We carried out experiments to explore the influence of sample sizes. We used Amide dataset and reduced the sample size to 80% (583), 60% (437), 40% (291), 20% (145), 10% (72), and 5% (36) of original sample size. The PCA score plot is shown below:
 
-![samples](\imgs\pca_samples.png)
+![samples](/imgs/pca_samples.png)
 
 The figure above shows that NormAE is available for data with more than 150 samles. For data whose sample size is smaller than 150, QCs didn't cluster together in PCA score plot.
 
@@ -46,7 +50,7 @@ NormAE dose need QCs. It removes batch effects throught batch labels and injecti
 
 NormAE has no requirements for the input format. In the article, we used peak area without any transformation. We also performed experiments for logarithm transformed data. The PCA score plot of Amide dataset is show below:
 
-![log](\imgs\pca_log.png)
+![log](/imgs/pca_log.png)
 
 The figure above shows that NormAE performed well for data after logarithm thansformation. It proves that NormAE is robust for the data format.
 
