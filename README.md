@@ -44,7 +44,7 @@ The figure above shows that NormAE is available for data with more than 150 saml
 
 #### Number of QCs
 
-NormAE dose need QCs. It removes batch effects throught batch labels and injection orders. But having dozens of QCs will help users to evaluate the model and optimize the hyperparameters. Our recommendation is more than 10 QCs.
+NormAE dosen't need QCs. It removes batch effects throught batch labels and injection orders. But having dozens of QCs will help users to evaluate the model and optimize the hyperparameters. Our recommendation is more than 10 QCs.
 
 #### Imput format
 
