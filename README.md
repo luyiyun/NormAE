@@ -1,3 +1,5 @@
+> There is a `visdom`-related bug that I will fix in the future.
+
 NormAE (Normalization Autoencoder)
 =============================
 It's a novel batch effects removal method based on deep autoencoder and adversarial leanring for metabolomics data. Additional classifier and ranker are trained to provide adversarial regularizations during training AE model, and latent representations are extracted by the encoder and then decoder reconstructs data without batch effects. The schematic diagram of NormAE is shown as follow.
