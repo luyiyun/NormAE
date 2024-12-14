@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools", "cython", "setuptools-scm"]  # 如果使用setup.py并且其中需要运行的包，都需要放在这里
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "normae"
+authors = [
+  {name = "Rong Zhiwei", email = "18845728185@163.com"}
+]
+description = "A deep adversarial model that remove the batch effect of untargeted LC-MS metabolomic data."
+keywords = ["bioinformatics", "deep-learning", "adversarial-learning", "metabolomics", "batch-effect"]
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "torch",
+  "scikit-learn",
+  "tqdm",
+  "tensorboard",
+  # "igraph>=0.10.3",
+  # "leidenalg>=0.9.1",
+  # "h5py>=3.8.0",
+  # "matplotlib>=3.7.2",
+  # "adjustText==0.8",
+]
+dynamic = ["version"]
+[project.optional-dependencies]
+develop = [
+    "ipdb",
+    "pytest",
+    "matplotlib",
+    "seaborn",
+]
+
+[tool.setuptools.packages]
+find = {where = ["src"], namespaces = true}  # namespaces=false will prevent any folder without an __init__.py file
+
+[tool.setuptools_scm]
+# can be empty if no extra settings are needed, presence enables setuptools_scm

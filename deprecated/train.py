@@ -12,7 +12,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from datasets import ConcatData
-from networks import SimpleCoder, OrderLoss
+from src.normae.networks import SimpleCoder, OrderLoss
 import metrics as mm
 from visual import VisObj, pca_for_dict, pca_plot
 
