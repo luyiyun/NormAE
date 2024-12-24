@@ -1,7 +1,7 @@
 > There is a `visdom`-related bug that I will fix in the future.
 
-NormAE (Normalization Autoencoder)
-=============================
+# NormAE (Normalization Autoencoder)
+
 It's a novel batch effects removal method based on deep autoencoder and adversarial leanring for metabolomics data. Additional classifier and ranker are trained to provide adversarial regularizations during training AE model, and latent representations are extracted by the encoder and then decoder reconstructs data without batch effects. The schematic diagram of NormAE is shown as follow.
 
 ![normAE](/imgs/graphics.png)
@@ -14,17 +14,18 @@ The NormAE method was tested in two real metabolomics datasets. We show the resu
 The results of Amide dataset. There are PCA score plots (A), heatmaps of the PCCs (B), intensity of peak M235T294 changing with injection order (C), the cumulative RSD curve of QCs (D), the number of differential peaks (E), average AUC values using same number of peaks (F), and AUC values using selected peaks based on features selection pipeline (G) before and after applying each batch effects removal method. Four colors circles refer to different batches. The solid and open circles refer to QCs and subject samples, respectively.
 </div>
 
-***
+---
 
 Paper: **NormAE: A Novel Deep Adversarial Learning Model to Remove Batch Effects in Liquid Chromatography Mass Spectrometry-Based Metabolomics Data**
 
-***
+---
 
 ## Table of Contents
-* Detail informations
-* Requirements
-* How to use
-* Contact
+
+- Detail informations
+- Installation
+- How to use
+- Contact
 
 ### Detail informations
 
@@ -56,22 +57,33 @@ NormAE has no requirements for the input format. In the article, we used peak ar
 
 The figure above shows that NormAE performed well for data after logarithm thansformation. It proves that NormAE is robust for the data format.
 
-### Requirements
+### Installation
 
-- [python == 3.6.8](https://www.python.org)
-- [pytorch == 1.2.0](https://pytorch.org)
-- [numpy == 1.17.3](https://numpy.org)
-- [pandas == 0.25.3](https://pandas.pydata.org)
-- [scipy == 1.3.1](https://www.scipy.org)
-- [sklearn == 0.21.3](https://scikit-learn.org)
-- [matplotlib == 3.1.1](https://matplotlib.org)
-- [visdom == 0.1.8.8](https://www.github.com/facebookresearch/visdom)
-- [argparse == 1.1](https://docs.python.org/3/library/argparse.html)
-- [tqdm == 4.32.2](https://tqdm.github.io)
+The code is written in Python 3.10 and can be installed using the following command:
+
+```bash
+pip install git+https://github.com/luyiyun/NormAE.git
+```
 
 ### How to use
 
+#### Using NormAE like a normal python package
+
+NormAE can be used like a normal python package. You can import the package and instantiate the `NormAE` and run the `fit` and `transform` methods to remove batch effects, like scikit-learn.
+
+```python
+from normae import NormAE
+
+normae = NormAE()
+normae.fit(X, y=batch_labels, z=injection_orders, X_qc=X_qc, y_qc=batch_labels_qc, z_qc=injection_orders_qc)
+X_nobe = normae.transform(X)
+```
+
+#### Using NormAE in command line
+
 #### Data preparation
+
+> Not Implemented Yet.
 
 metabolomics_data:
 
@@ -104,6 +116,7 @@ if you need the visualization of visdom, you can open visdom server firstly.
 ```bash
 visdom --port 8097
 ```
+
 Then you can perform the script to training and save trained model in `/path/to/save_dir`.
 
 ```bash

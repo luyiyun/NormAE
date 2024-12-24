@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
-# import seaborn as sns
 
 from .model import NormAENet
 from .train import train, generate
@@ -37,11 +36,11 @@ class NormAEDataSet(Dataset):
 
 @dataclass
 class NormAE:
-    n_latents: int = 500
-    enc_hiddens: tuple[int] = (1000, 1000)
-    dec_hiddens: tuple[int] = (1000, 1000)
-    disc_batch_hiddens: list[int] = (250, 250)
-    disc_order_hiddens: list[int] = (250, 250)
+    n_latents: int = 100
+    enc_hiddens: tuple[int] = ((300, 300),)
+    dec_hiddens: tuple[int] = (300, 300)
+    disc_batch_hiddens: tuple[int] = (250,)
+    disc_order_hiddens: tuple[int] = (250,)
     enc_bn: bool = True
     dec_bn: bool = True
     disc_batch_bn: bool = True
@@ -58,12 +57,12 @@ class NormAE:
     lr_rec: float = 2e-4
     lr_disc_batch: float = 5e-3
     lr_disc_order: float = 5e-4
-    n_epochs_rec_pretrain: int = 1000
+    n_epochs_rec_pretrain: int = 100
     n_epochs_disc_pretrain: int = 10
-    n_epochs_iter_train: int = 700
-    min_n_epochs_iter_train: int = 100
-    early_stop: bool = False
-    early_stop_patience: int = 10
+    n_epochs_iter_train: int = 500
+    min_n_epochs_iter_train: int = 400
+    early_stop: bool = True
+    early_stop_patience: int = 20
     grad_clip: bool = True
     grad_clip_norm: float = 1.0
     train_with_qc: bool = True
@@ -126,16 +125,8 @@ class NormAE:
             # batch的时候会有更加充分的混合
             if self.train_with_qc:
                 Xt = torch.cat([Xt, Xt_qc], dim=0)
-                yt = (
-                    None
-                    if yt is None
-                    else torch.cat([yt, yt_qc], dim=0)
-                )
-                zt = (
-                    None
-                    if zt is None
-                    else torch.cat([zt, zt_qc], dim=0)
-                )
+                yt = None if yt is None else torch.cat([yt, yt_qc], dim=0)
+                zt = None if zt is None else torch.cat([zt, zt_qc], dim=0)
 
         dat = NormAEDataSet(Xt, yt, zt)
         dataloader = torch.utils.data.DataLoader(
