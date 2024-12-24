@@ -147,7 +147,7 @@ def get_x_y_z(
 def train(
     model: NormAENet,
     train_loader: DataLoader,
-    device: str,
+    device: torch.device,
     lr_rec: float,
     lr_disc_batch: float,
     lr_disc_order: float,
