@@ -61,10 +61,12 @@ class NormAE:
     n_epochs_rec_pretrain: int = 1000
     n_epochs_disc_pretrain: int = 10
     n_epochs_iter_train: int = 700
+    min_n_epochs_iter_train: int = 100
     early_stop: bool = False
     early_stop_patience: int = 10
     grad_clip: bool = True
     grad_clip_norm: float = 1.0
+    train_with_qc: bool = True
 
     def fit(
         self,
@@ -100,10 +102,6 @@ class NormAE:
             if z is None
             else torch.tensor(z, dtype=torch.float32, device=device)
         )
-        dat = NormAEDataSet(Xt, yt, zt)
-        dataloader = torch.utils.data.DataLoader(
-            dat, batch_size=self.batch_size, shuffle=True
-        )
 
         if X_qc is not None:
             Xt_qc = torch.tensor(X_qc, dtype=torch.float32, device=device)
@@ -123,6 +121,26 @@ class NormAE:
                 batch_size=self.batch_size,
                 shuffle=True,
             )
+
+            # 在一开始的时候就把qc数据集和正常数据集合并，这样在创建
+            # batch的时候会有更加充分的混合
+            if self.train_with_qc:
+                Xt = torch.cat([Xt, Xt_qc], dim=0)
+                yt = (
+                    None
+                    if yt is None
+                    else torch.cat([yt, yt_qc], dim=0)
+                )
+                zt = (
+                    None
+                    if zt is None
+                    else torch.cat([zt, zt_qc], dim=0)
+                )
+
+        dat = NormAEDataSet(Xt, yt, zt)
+        dataloader = torch.utils.data.DataLoader(
+            dat, batch_size=self.batch_size, shuffle=True
+        )
 
         self.model_ = NormAENet(
             n_features=X.shape[1],
@@ -157,6 +175,7 @@ class NormAE:
             n_epochs_rec_pretrain=self.n_epochs_rec_pretrain,
             n_epochs_disc_pretrain=self.n_epochs_disc_pretrain,
             n_epochs_iter_train=self.n_epochs_iter_train,
+            min_n_epochs_iter_train=self.min_n_epochs_iter_train,
             lr_rec=self.lr_rec,
             lr_disc_batch=self.lr_disc_batch,
             lr_disc_order=self.lr_disc_order,

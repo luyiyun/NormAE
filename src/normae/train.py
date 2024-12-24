@@ -79,8 +79,9 @@ class QCEvaluator:
 
 
 class EarlyStopper:
-    def __init__(self, patience: int):
+    def __init__(self, patience: int, min_epochs: int = 0):
         self.patience = patience
+        self.min_epochs = min_epochs
         self.init()
 
     def init(self):
@@ -89,6 +90,8 @@ class EarlyStopper:
         self.best_epoch = -1
 
     def __call__(self, epoch: int, score: float) -> bool:
+        if epoch < self.min_epochs:
+            return False
         if score < self.best_score:
             self.best_score = score
             self.cnt = 0
@@ -154,6 +157,7 @@ def train(
     n_epochs_rec_pretrain: int,
     n_epochs_disc_pretrain: int,
     n_epochs_iter_train: int,
+    min_n_epochs_iter_train: int = 0,
     qc_loader: DataLoader | None = None,
     early_stop: bool = False,
     early_stop_patience: int = 10,
@@ -196,13 +200,9 @@ def train(
         )
         # qc_evaluator = QCEvaluator(pca_n_components=3)
     if early_stop:
-        early_stopper = EarlyStopper(patience=early_stop_patience)
-
-    loader = (
-        ChainDataLoader(train_loader, qc_loader)
-        if qc_loader is not None
-        else train_loader
-    )
+        early_stopper = EarlyStopper(
+            patience=early_stop_patience, min_epochs=min_n_epochs_iter_train
+        )
 
     history = []
     for e in tqdm(
@@ -210,7 +210,7 @@ def train(
     ):
         model.train()
         loss_accumulator.init()
-        for b in tqdm(loader, desc="Batch: ", leave=False):
+        for b in tqdm(train_loader, desc="Batch: ", leave=False):
             x, y, z = get_x_y_z(b, device)
             loss, losses = model(x, y, z, phase="reconstruct_pretrain")
             optimizer_rec.zero_grad()
@@ -239,7 +239,7 @@ def train(
     ):
         model.train()
         loss_accumulator.init()
-        for b in tqdm(loader, desc="Batch: ", leave=False):
+        for b in tqdm(train_loader, desc="Batch: ", leave=False):
             x, y, z = get_x_y_z(b, device)
             loss, losses = model(x, y, z, phase="discriminate")
             optimizer_disc.zero_grad()
@@ -272,7 +272,7 @@ def train(
     ):
         model.train()
         loss_accumulator.init()
-        for b in tqdm(loader, desc="Batch: ", leave=False):
+        for b in tqdm(train_loader, desc="Batch: ", leave=False):
             x, y, z = get_x_y_z(b, device)
             loss, losses = model(x, y, z, phase="discriminate")
             optimizer_disc.zero_grad()

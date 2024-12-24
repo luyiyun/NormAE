@@ -1,9 +1,7 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from normae import NormAE
-from sklearn.decomposition import PCA
+from normae.utils import plot_pca
 
 
 def get_data(log_transform: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -73,11 +71,17 @@ def main():
         # lr_rec=0.01,
         # lr_disc_batch=0.01,
         # lr_disc_order=0.01,
-        n_epochs_rec_pretrain=40,
+        n_epochs_rec_pretrain=100,
         n_epochs_disc_pretrain=10,
-        n_epochs_iter_train=100,
-        early_stop=False,
+        n_epochs_iter_train=500,
+        min_n_epochs_iter_train=400,
+        # n_epochs_rec_pretrain=0,
+        # n_epochs_disc_pretrain=0,
+        # n_epochs_iter_train=2,
+        # min_n_epochs_iter_train=0,
+        early_stop=True,
         batch_size=128,
+        early_stop_patience=20,
     )
     normae.fit(
         meta_df_subject.values,
@@ -90,30 +94,13 @@ def main():
     normae.plot_history("./normae_history.png")
 
     X_clean = normae.transform(meta_df.values)
-    X_clean_pca = PCA(n_components=2).fit_transform(X_clean)
-    batches = info_df["batch"].unique()
-    palette = sns.color_palette()
-    fig, ax = plt.subplots(figsize=(8, 8))
-    for ci in ["Subject", "QC"]:
-        for i, bi in enumerate(batches):
-            mask = (info_df["class"] == ci) & (info_df["batch"] == bi)
-            x, y = X_clean_pca[mask, 0], X_clean_pca[mask, 1]
-            ax.plot(
-                x,
-                y,
-                "o",
-                color=palette[i],
-                label=f"batch={bi}",
-                alpha=0.2 if ci == "Subject" else 1,
-            )
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles=handles[batches.shape[0] :],
-        labels=labels[batches.shape[0] :],
-        loc="best",
+    fig, _ = plot_pca(
+        X_clean,
+        qc=info_df["class"].values,
+        batch=info_df["batch"].values,
+        label=info_df["group"].values,
+        injection=info_df["injection.order"].values,
     )
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
     fig.savefig("./normae_pca.png")
 
 
