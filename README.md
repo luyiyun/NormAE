@@ -1,4 +1,4 @@
-> There is a `visdom`-related bug that I will fix in the future.
+> Now NormAE is a package.
 
 # NormAE (Normalization Autoencoder)
 
