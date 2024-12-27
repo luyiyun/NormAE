@@ -23,7 +23,7 @@ dependencies = [
   "matplotlib>=3.9.0",
   "seaborn>=0.13.2",
 ]
-dynamic = "1.2.0"
+dynamic = ["version"]
 [project.optional-dependencies]
 develop = [
     "ipdb",
@@ -35,3 +35,7 @@ find = {where = ["src"], namespaces = true}  # namespaces=false will prevent any
 
 [tool.setuptools_scm]
 # can be empty if no extra settings are needed, presence enables setuptools_scm
+#
+#
+[tool.setuptools.dynamic]
+version = {attr = "normae.__version__"}  # any module attribute compatible with ast.literal_eval
