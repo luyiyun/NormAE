@@ -7,3 +7,4 @@ __pycache__/
 *.pyd
 *.png
 !imgs/*.png
+example_amide/

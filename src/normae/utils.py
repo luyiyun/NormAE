@@ -15,8 +15,7 @@ def plot_pca(
 ) -> tuple[Figure, Axes]:
     X_clean_pca = PCA(n_components=2).fit_transform(X_clean)
     n_subfigs = (
-        1
-        + (qc is not None)
+        (qc is not None)
         + (batch is not None)
         + (label is not None)
         + (injection is not None)
@@ -24,9 +23,7 @@ def plot_pca(
     nrows = 2 if n_subfigs > 3 else 1
     ncols = n_subfigs if n_subfigs <= 3 else n_subfigs // 2
 
-    fig, axs = plt.subplots(
-        figsize=(ncols * 4, nrows * 4), ncols=ncols, nrows=nrows
-    )
+    fig, axs = plt.subplots(figsize=(ncols * 4, nrows * 4), ncols=ncols, nrows=nrows)
     axs = axs.flatten()
 
     i = 0

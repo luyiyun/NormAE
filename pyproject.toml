@@ -29,6 +29,8 @@ develop = [
     "ipdb",
     "pytest",
 ]
+[project.scripts]
+normae = "normae.cli:app"
 
 [tool.setuptools.packages]
 find = {where = ["src"], namespaces = true}  # namespaces=false will prevent any folder without an __init__.py file

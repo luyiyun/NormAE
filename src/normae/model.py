@@ -107,13 +107,11 @@ class NormAENet(nn.Module):
     ):
         if n_batches is None and disc_batch_hiddens is not None:
             raise ValueError(
-                "n_batches should be provided "
-                "if disc_batch_hiddens is not None"
+                "n_batches should be provided " "if disc_batch_hiddens is not None"
             )
         if n_batches is not None and disc_batch_hiddens is None:
             raise ValueError(
-                "disc_batch_hiddens should be provided "
-                "if n_batches is not None"
+                "disc_batch_hiddens should be provided " "if n_batches is not None"
             )
         if n_batches is None and disc_order_hiddens is None:
             raise ValueError(
@@ -146,7 +144,14 @@ class NormAENet(nn.Module):
             dec_dropout,
         )
         self.mapper = MLP(
-            n_batches + 1, n_latents, (500,), act, True, dropout=0.0
+            int(disc_order_hiddens is not None)
+            if n_batches is None
+            else n_batches + int(disc_order_hiddens is not None),
+            n_latents,
+            (500,),
+            act,
+            True,
+            dropout=0.0,
         )
 
         if disc_batch_hiddens is not None:
@@ -233,17 +238,21 @@ class NormAENet(nn.Module):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         with torch.no_grad():  # NOTE: 可能会产生冲突
             latent = self.encoder(x)
+        loss, loss_dict = 0.0, {}
         if self.disc_b_hiddens is not None:
             disc_b_logits = self.disc_b(latent)
             loss_disc_b = self.criterion_disc_b(disc_b_logits, y)
+            loss = loss + loss_disc_b
+            loss_dict["disc_b"] = loss_disc_b
         if self.disc_o_hiddens is not None:
             disc_o_logits = self.disc_o(latent)
             loss_disc_o = self.criterion_disc_o(
                 disc_o_logits, z, group=y if self.grouped_order_loss else None
             )
+            loss = loss + loss_disc_o
+            loss_dict["disc_o"] = loss_disc_o
 
-        loss = loss_disc_b + loss_disc_o
-        return loss, {"disc_b": loss_disc_b, "disc_o": loss_disc_o}
+        return loss, loss_dict
 
     def _forward_generate(self, x: torch.Tensor) -> torch.Tensor:
         return self.decoder(self.encoder(x))

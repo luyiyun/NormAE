@@ -53,7 +53,7 @@ class NormAE:
     lambda_batch: float = 1.0
     lambda_order: float = 1.0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size: int = 64
+    batch_size: int = 128
     lr_rec: float = 2e-4
     lr_disc_batch: float = 5e-3
     lr_disc_order: float = 5e-4
@@ -80,27 +80,15 @@ class NormAE:
             raise ValueError("Either y or z must be provided.")
         if X_qc is not None:
             if y is not None:
-                assert (
-                    y_qc is not None
-                ), "y_qc must be provided if y is provided."
+                assert y_qc is not None, "y_qc must be provided if y is provided."
             if z is not None:
-                assert (
-                    z_qc is not None
-                ), "z_qc must be provided if z is provided."
+                assert z_qc is not None, "z_qc must be provided if z is provided."
 
         device = torch.device(self.device)
 
         Xt = torch.tensor(X, dtype=torch.float32, device=device)
-        yt = (
-            None
-            if y is None
-            else torch.tensor(y, dtype=torch.long, device=device)
-        )
-        zt = (
-            None
-            if z is None
-            else torch.tensor(z, dtype=torch.float32, device=device)
-        )
+        yt = None if y is None else torch.tensor(y, dtype=torch.long, device=device)
+        zt = None if z is None else torch.tensor(z, dtype=torch.float32, device=device)
 
         if X_qc is not None:
             Xt_qc = torch.tensor(X_qc, dtype=torch.float32, device=device)
@@ -139,12 +127,8 @@ class NormAE:
             n_batches=np.unique(y).shape[0] if y is not None else None,
             enc_hiddens=self.enc_hiddens,
             dec_hiddens=self.dec_hiddens,
-            disc_batch_hiddens=self.disc_batch_hiddens
-            if y is not None
-            else None,
-            disc_order_hiddens=self.disc_order_hiddens
-            if z is not None
-            else None,
+            disc_batch_hiddens=self.disc_batch_hiddens if y is not None else None,
+            disc_order_hiddens=self.disc_order_hiddens if z is not None else None,
             act=nn.ReLU(),
             enc_bn=self.enc_bn,
             dec_bn=self.dec_bn,

@@ -31,8 +31,7 @@ class LossAccumulator:
         prefix: str = "",
     ):
         self.loss_dict[f"{prefix}main"] = (
-            self.loss_dict.get(f"{prefix}main", 0)
-            + main_loss.item() * batch_size
+            self.loss_dict.get(f"{prefix}main", 0) + main_loss.item() * batch_size
         )
         self.cnt_dict[f"{prefix}main"] = (
             self.cnt_dict.get(f"{prefix}main", 0) + batch_size
@@ -103,9 +102,7 @@ class EarlyStopper:
         return False
 
     def best_info(self) -> str:
-        return (
-            f"best_score: {self.best_score:.2f}, best_epoch: {self.best_epoch}"
-        )
+        return f"best_score: {self.best_score:.2f}, best_epoch: {self.best_epoch}"
 
 
 class BestModelSaver:
@@ -178,13 +175,9 @@ def train(
     )
     params = []
     if model.disc_b_hiddens is not None:
-        params.append(
-            {"params": model.disc_b.parameters(), "lr": lr_disc_batch}
-        )
+        params.append({"params": model.disc_b.parameters(), "lr": lr_disc_batch})
     if model.disc_o_hiddens is not None:
-        params.append(
-            {"params": model.disc_o.parameters(), "lr": lr_disc_order}
-        )
+        params.append({"params": model.disc_o.parameters(), "lr": lr_disc_order})
     optimizer_disc = torch.optim.Adam(
         params,
         betas=(0.5, 0.9),
@@ -205,9 +198,7 @@ def train(
         )
 
     history = []
-    for e in tqdm(
-        range(n_epochs_rec_pretrain), desc="Epoch(pretrain autoencoder): "
-    ):
+    for e in tqdm(range(n_epochs_rec_pretrain), desc="Epoch(pretrain autoencoder): "):
         model.train()
         loss_accumulator.init()
         for b in tqdm(train_loader, desc="Batch: ", leave=False):
@@ -267,9 +258,7 @@ def train(
         )
         history.append(loss_dict)
 
-    for e in tqdm(
-        range(n_epochs_iter_train), desc="Epoch(iterative training): "
-    ):
+    for e in tqdm(range(n_epochs_iter_train), desc="Epoch(iterative training): "):
         model.train()
         loss_accumulator.init()
         for b in tqdm(train_loader, desc="Batch: ", leave=False):
@@ -283,9 +272,7 @@ def train(
                     max_norm=grad_clip_norm,
                 )
             optimizer_disc.step()
-            loss_accumulator.update(
-                x.size(0), loss, losses, prefix="iterdisc_"
-            )
+            loss_accumulator.update(x.size(0), loss, losses, prefix="iterdisc_")
 
             loss, losses = model(x, y, z, phase="reconstruct")
             optimizer_rec.zero_grad()
@@ -321,17 +308,11 @@ def train(
             with torch.no_grad():
                 for b in tqdm(qc_loader, desc="QC Batch: ", leave=False):
                     x, y, z = get_x_y_z(b, device)
-                    qc_loss, rec_clean = model(
-                        x, y, z, phase="reconstruct_valid"
-                    )
-                    loss_accumulator.update(
-                        x.size(0), qc_loss, {}, prefix="qc_"
-                    )
+                    qc_loss, rec_clean = model(x, y, z, phase="reconstruct_valid")
+                    loss_accumulator.update(x.size(0), qc_loss, {}, prefix="qc_")
                     rec_clean_qc.append(rec_clean)
                 rec_clean_qc = torch.cat(rec_clean_qc, dim=0)
-                for b in tqdm(
-                    train_loader, desc="QC Batch(Subject): ", leave=False
-                ):
+                for b in tqdm(train_loader, desc="QC Batch(Subject): ", leave=False):
                     x, y, z = get_x_y_z(b, device)
                     rec_clean = model(x, y, z, phase="generate")
                     rec_clean_train.append(rec_clean)
@@ -351,9 +332,7 @@ def train(
             )
             loss_dict.update(
                 {
-                    "epoch": e
-                    + n_epochs_rec_pretrain
-                    + n_epochs_disc_pretrain,
+                    "epoch": e + n_epochs_rec_pretrain + n_epochs_disc_pretrain,
                     "phase_epoch": e,
                     "phase": "iter_train_valid",
                     "qc_md": qc_md,
@@ -366,7 +345,7 @@ def train(
 
     if early_stop:
         tqdm.write(early_stopper.best_info())
-    best_saver.load_best_model(model)
+        best_saver.load_best_model(model)
 
     return pd.DataFrame.from_records(history)
 

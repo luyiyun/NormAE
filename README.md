@@ -81,7 +81,19 @@ X_nobe = normae.transform(X)
 
 #### Using NormAE in command line
 
-> Not Implemented Yet.
+After installing NormAE, you can use the command line to run the `normae` command. The command line interface provides a simple way to run the NormAE model.
+
+1. The metabolomics data should be in the format of CSV file like `./example/example_x.csv`. The batch label, injection_orders and QC/non-QC labels should be in the format of CSV like `./example/example_y.csv`.
+
+2. Run the following command to train the NormAE model:
+
+  ```bash
+  normae --meta_csv ./example/example_x.csv --sample_csv ./example/example_sample_info.csv --output_dir ./example/
+  ```
+
+3. The results will be saved in the output directory.
+
+You can run `normae --help` to see the full list of options.
 
 ### Contact
 

@@ -9,9 +9,7 @@ def get_data(log_transform: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     # mz_rt_df = meta_df[["mz", "rt"]]
     meta_df = meta_df.drop(columns=["mz", "rt"]).T
 
-    info_df = pd.read_csv(
-        "./data/OriData/Amide/sample.information.csv", index_col=0
-    )
+    info_df = pd.read_csv("./data/OriData/Amide/sample.information.csv", index_col=0)
 
     indice_inter = info_df.index.intersection(meta_df.index)
     meta_df = meta_df.loc[indice_inter]
